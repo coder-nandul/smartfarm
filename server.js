@@ -1,8 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
 const { TuyaContext } = require('@tuya/tuya-connector-nodejs');
 
 const app = express();
@@ -10,32 +10,53 @@ const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static('G:\\내 드라이브\\귤\\스마트팜\\대시보드'));
+
+// 프론트엔드 정적 파일 서빙 (Render 웹 서비스 대응)
+app.use(express.static(__dirname));
 
 // 1. Tuya API Configuration
 const tuya = new TuyaContext({
-  baseUrl: 'https://openapi.tuyaus.com', // Change depending on region (e.g. tuyaeu.com, tuyacn.com)
+  baseUrl: 'https://openapi.tuyaus.com',
   accessKey: process.env.TUYA_ACCESS_ID,
   secretKey: process.env.TUYA_ACCESS_KEY,
 });
 
-// 2. Local Database for Farming Logs & Rainfall
-const dbPath = process.env.DB_PATH || path.join(__dirname, 'database.json');
-let db = { logs: [], dailyRainfall: {}, weatherStats: {} };
+// 2. MongoDB Connection (클라우드 DB 마이그레이션)
+const MONGODB_URI = process.env.MONGODB_URI;
 
-// Load DB
-if (fs.existsSync(dbPath)) {
-    try {
-        db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
-    } catch (e) {
-        console.error('Failed to parse database.json', e);
-    }
+if (!MONGODB_URI) {
+    console.warn('⚠️ MONGODB_URI 환경변수가 설정되지 않았습니다. DB 연동이 실패할 수 있습니다.');
+} else {
+    mongoose.connect(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+        .then(() => console.log('✅ MongoDB Atlas 연결 성공!'))
+        .catch(err => console.error('❌ MongoDB 연결 실패:', err));
 }
 
-// Save DB helper
-function saveDb() {
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-}
+// 2.1 Mongoose Schemas & Models
+const LogSchema = new mongoose.Schema({
+    type: String,
+    content: String,
+    amount: { type: Number, default: 0 },
+    unit: { type: String, default: 'kg' },
+    revenue: { type: Number, default: 0 },
+    date: String // YYYY-MM-DD
+});
+const Log = mongoose.model('Log', LogSchema);
+
+const RainfallSchema = new mongoose.Schema({
+    date: { type: String, unique: true }, // YYYY-MM-DD
+    amount: { type: Number, default: 0 }
+});
+const DailyRainfall = mongoose.model('DailyRainfall', RainfallSchema);
+
+const WeatherStatSchema = new mongoose.Schema({
+    date: { type: String, unique: true }, // YYYY-MM-DD
+    minTemp: Number,
+    maxTemp: Number,
+    rain24h: { type: Number, default: 0 }
+});
+const WeatherStat = mongoose.model('WeatherStat', WeatherStatSchema);
+
 
 // 3. API Endpoints
 
@@ -45,90 +66,103 @@ app.get('/api/health', (req, res) => {
 });
 
 // Farming Logs & Cumulative Rainfall & Annual Stats
-app.get('/api/logs', (req, res) => {
-    const sortedLogs = [...db.logs].sort((a, b) => new Date(b.date) - new Date(a.date));
-    
-    // Find last pesticide date
-    const lastPesticide = sortedLogs.find(log => log.type === 'pesticide');
-    let cumulativeRain = 0;
-    
-    if (lastPesticide) {
-        // Calculate rain since that date
-        const pesticideDate = new Date(lastPesticide.date);
-        for (const [dateStr, rainAmt] of Object.entries(db.dailyRainfall)) {
-            if (new Date(dateStr) >= pesticideDate) {
-                cumulativeRain += rainAmt;
-            }
+app.get('/api/logs', async (req, res) => {
+    try {
+        const logs = await Log.find().sort({ date: -1 });
+        
+        // Find last pesticide date
+        const lastPesticide = logs.find(log => log.type === 'pesticide');
+        let cumulativeRain = 0;
+        
+        if (lastPesticide) {
+            const pesticideDateStr = lastPesticide.date;
+            const rainfallRecords = await DailyRainfall.find({ date: { $gte: pesticideDateStr } });
+            cumulativeRain = rainfallRecords.reduce((acc, curr) => acc + curr.amount, 0);
         }
-    }
 
-    // Calculate Annual Stats (Current Year)
-    const currentYear = new Date().getFullYear().toString();
-    let totalHarvestKg = 0;
-    let totalSalesWon = 0;
+        // Calculate Annual Stats (Current Year)
+        const currentYear = new Date().getFullYear().toString();
+        let totalHarvestKg = 0;
+        let totalSalesWon = 0;
 
-    db.logs.forEach(log => {
-        if (log.date && log.date.startsWith(currentYear)) {
-            if (log.type === 'harvest' && log.amount) {
-                const amt = Number(log.amount);
-                if (log.unit === '관') {
-                    totalHarvestKg += (amt * 3.75);
-                } else {
-                    totalHarvestKg += amt;
+        logs.forEach(log => {
+            if (log.date && log.date.startsWith(currentYear)) {
+                if (log.type === 'harvest' && log.amount) {
+                    const amt = Number(log.amount);
+                    if (log.unit === '관') {
+                        totalHarvestKg += (amt * 3.75);
+                    } else {
+                        totalHarvestKg += amt;
+                    }
+                } else if (log.type === 'sales' && log.revenue) {
+                    totalSalesWon += Number(log.revenue);
                 }
-            } else if (log.type === 'sales' && log.revenue) {
-                totalSalesWon += Number(log.revenue);
             }
-        }
-    });
-    
-    res.json({
-        logs: sortedLogs.slice(0, 15), // Return last 15 logs
-        pesticideInfo: lastPesticide ? { date: lastPesticide.date, cumulativeRain: cumulativeRain.toFixed(1) } : null,
-        annualStats: {
-            totalHarvest: Math.round(totalHarvestKg),
-            totalSales: totalSalesWon
-        }
-    });
+        });
+        
+        res.json({
+            logs: logs.slice(0, 15),
+            pesticideInfo: lastPesticide ? { date: lastPesticide.date, cumulativeRain: cumulativeRain.toFixed(1) } : null,
+            annualStats: {
+                totalHarvest: Math.round(totalHarvestKg),
+                totalSales: totalSalesWon
+            }
+        });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'DB Fetch Error' });
+    }
 });
 
-app.post('/api/logs', (req, res) => {
-    const { type, content, amount, unit, revenue, date } = req.body;
-    const logDate = date || new Date().toISOString().split('T')[0];
-    
-    db.logs.push({
-        id: Date.now().toString(),
-        type,
-        content,
-        amount: amount || 0,
-        unit: unit || 'kg',
-        revenue: revenue || 0,
-        date: logDate
-    });
-    
-    saveDb();
-    res.json({ success: true });
+app.post('/api/logs', async (req, res) => {
+    try {
+        const { type, content, amount, unit, revenue, date } = req.body;
+        const logDate = date || new Date().toISOString().split('T')[0];
+        
+        const newLog = new Log({
+            type,
+            content,
+            amount: amount || 0,
+            unit: unit || 'kg',
+            revenue: revenue || 0,
+            date: logDate
+        });
+        
+        await newLog.save();
+        res.json({ success: true });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'DB Save Error' });
+    }
 });
 
 // Rainfall data (Mocking logic for Tuya integration or manual update)
-app.get('/api/rainfall', (req, res) => {
-    const today = new Date().toISOString().split('T')[0];
-    const todayRain = db.dailyRainfall[today] || 0.0;
-    
-    // Weekly rain
-    let weeklyRain = 0;
-    const now = new Date();
-    for (let i = 0; i < 7; i++) {
-        const d = new Date(now);
-        d.setDate(now.getDate() - i);
-        const dateStr = d.toISOString().split('T')[0];
-        weeklyRain += (db.dailyRainfall[dateStr] || 0);
+app.get('/api/rainfall', async (req, res) => {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        const todayRecord = await DailyRainfall.findOne({ date: today });
+        const todayRain = todayRecord ? todayRecord.amount : 0.0;
+        
+        // Weekly rain
+        const now = new Date();
+        const dates = [];
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(now);
+            d.setDate(now.getDate() - i);
+            dates.push(d.toISOString().split('T')[0]);
+        }
+        
+        const weeklyRecords = await DailyRainfall.find({ date: { $in: dates } });
+        const weeklyRain = weeklyRecords.reduce((acc, curr) => acc + curr.amount, 0);
+        
+        res.json({
+            today: todayRain.toFixed(1),
+            weekly: weeklyRain.toFixed(1)
+        });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'DB Fetch Error' });
     }
-    
-    res.json({
-        today: todayRain.toFixed(1),
-        weekly: weeklyRain.toFixed(1)
-    });
 });
 
 // Get Weather Data (Tuya 기상대 상태 조회)
@@ -143,8 +177,7 @@ app.get('/api/weather', async (req, res) => {
             tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
         ]);
         
-        // Log Statistics locally
-        if (!db.weatherStats) db.weatherStats = {};
+        // Log Statistics to MongoDB
         const today = new Date(new Date().getTime() + 9 * 3600 * 1000).toISOString().split('T')[0]; // KST
         
         let currentTemp = null;
@@ -155,15 +188,16 @@ app.get('/api/weather', async (req, res) => {
             if (item.code === 'rain_24h') currentRain24h = item.value / 10;
         });
 
-        if (currentTemp !== null) {
-            if (!db.weatherStats[today]) {
-                db.weatherStats[today] = { minTemp: currentTemp, maxTemp: currentTemp, rain24h: currentRain24h || 0 };
+        if (currentTemp !== null && MONGODB_URI) {
+            let stat = await WeatherStat.findOne({ date: today });
+            if (!stat) {
+                stat = new WeatherStat({ date: today, minTemp: currentTemp, maxTemp: currentTemp, rain24h: currentRain24h || 0 });
             } else {
-                db.weatherStats[today].minTemp = Math.min(db.weatherStats[today].minTemp, currentTemp);
-                db.weatherStats[today].maxTemp = Math.max(db.weatherStats[today].maxTemp, currentTemp);
-                db.weatherStats[today].rain24h = Math.max(db.weatherStats[today].rain24h || 0, currentRain24h || 0);
+                stat.minTemp = Math.min(stat.minTemp, currentTemp);
+                stat.maxTemp = Math.max(stat.maxTemp, currentTemp);
+                stat.rain24h = Math.max(stat.rain24h || 0, currentRain24h || 0);
             }
-            saveDb();
+            await stat.save();
         }
         
         res.json({
@@ -177,8 +211,19 @@ app.get('/api/weather', async (req, res) => {
 });
 
 // Get Weather Stats (자체 통계 데이터)
-app.get('/api/weather/stats', (req, res) => {
-    res.json(db.weatherStats || {});
+app.get('/api/weather/stats', async (req, res) => {
+    try {
+        const stats = await WeatherStat.find().sort({ date: -1 });
+        // 클라이언트에서 기존과 동일하게 객체 형태로 매핑하기 위함
+        const statsObj = {};
+        stats.forEach(stat => {
+            statsObj[stat.date] = stat;
+        });
+        res.json(statsObj);
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'DB Fetch Error' });
+    }
 });
 
 // Get Switch Status (Tuya 스위치 상태 조회)
@@ -229,6 +274,6 @@ app.post('/api/switch/:id', async (req, res) => {
 });
 
 app.listen(port, () => {
-    console.log(`Smart Farm Backend Server running on http://localhost:${port}`);
-    console.log(`(Tuya API 연동 활성화)`);
+    console.log(`Smart Farm Backend Server running on port ${port}`);
+    console.log(`(Tuya API 연동 및 MongoDB 상태 대기 중)`);
 });
