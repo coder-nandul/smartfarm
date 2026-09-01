@@ -70,14 +70,15 @@ app.get('/api/logs', async (req, res) => {
     try {
         const logs = await Log.find().sort({ date: -1 });
         
-        // Find last pesticide date
-        const lastPesticide = logs.find(log => log.type === 'pesticide');
+        // Find last pesticide date or reset
+        const lastPesticide = logs.find(log => log.type === 'pesticide' || log.type === 'pesticide_reset');
         let cumulativeRain = 0;
         
         if (lastPesticide) {
             const pesticideDateStr = lastPesticide.date;
-            const rainfallRecords = await DailyRainfall.find({ date: { $gte: pesticideDateStr } });
-            cumulativeRain = rainfallRecords.reduce((acc, curr) => acc + curr.amount, 0);
+            // 기상대에서 측정한 실제 비 데이터를 합산합니다.
+            const rainfallRecords = await WeatherStat.find({ date: { $gte: pesticideDateStr } });
+            cumulativeRain = rainfallRecords.reduce((acc, curr) => acc + (curr.rain24h || 0), 0);
         }
 
         // Calculate Annual Stats (Current Year)

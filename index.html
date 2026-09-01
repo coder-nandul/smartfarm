@@ -91,11 +91,6 @@
                             </div>
                         </div>
                     </div>
-                    <div class="cumulative-rain-box">
-                        <i class="fa-solid fa-droplet"></i> 
-                        <span>최근 7일 누적 강수량: </span>
-                        <strong id="weekly-rain-val">0.0mm</strong>
-                    </div>
                 </div>
             </section>
 
@@ -130,9 +125,12 @@
                             <div>
                                 <h3 style="margin-bottom:0.25rem;"><i class="fa-solid fa-spray-can"></i> 최근 농약 살포: <span id="last-pesticide-date" style="color:var(--text-primary); font-size:1rem;">기록 없음</span></h3>
                             </div>
-                            <div style="text-align: right;">
+                            <div style="text-align: right; display: flex; flex-direction: column; align-items: flex-end;">
                                 <span style="font-size: 0.75rem; color:var(--text-secondary);">살포 후 누적 강수량</span>
-                                <div class="value highlight-danger" id="pesticide-rain-val" style="font-size:1.25rem; font-weight:bold;">0.0mm</div>
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <div class="value highlight-danger" id="pesticide-rain-val" style="font-size:1.25rem; font-weight:bold;">0.0mm</div>
+                                    <button id="btn-reset-rain" class="action-btn-small" style="background-color: var(--card-bg); color: var(--text-primary); border: 1px solid var(--border-color);"><i class="fa-solid fa-rotate-left"></i> 0으로 초기화</button>
+                                </div>
                             </div>
                         </div>
                     </div>

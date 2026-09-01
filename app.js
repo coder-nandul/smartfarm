@@ -130,19 +130,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 let mappedRainRate = 0;
                 let mappedRain24h = 0;
                 
+                // 16-point compass mapping helper
+                function getWindDirectionStr(val) {
+                    if (typeof val === 'string' && isNaN(val)) return val;
+                    const degree = parseFloat(val);
+                    if (isNaN(degree)) return '--';
+                    const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+                    const valIndex = Math.floor((degree / 22.5) + 0.5);
+                    return directions[valIndex % 16];
+                }
+
                 weatherData.forEach(item => {
                     // Strict External mapping
                     if (item.code === 'temp_current_external') mappedTemp = (item.value / 10).toFixed(1);
                     if (item.code === 'humidity_outdoor') mappedHum = item.value;
                     if (item.code === 'windspeed_gust') mappedWind = (item.value / 10).toFixed(1);
-                    if (item.code === 'wind_direction') mappedWindDir = item.value; // 16방위 표기 데이터가 들어올 경우 대비
+                    if (item.code === 'wind_direction') mappedWindDir = getWindDirectionStr(item.value); // Convert degrees to 16-point
                     if (item.code === 'rain_rate') mappedRainRate = (item.value / 10).toFixed(1);
                     if (item.code === 'rain_24h') mappedRain24h = (item.value / 10).toFixed(1);
                 });
                 
-                // 바람이 0일 경우 방향을 'C(Center)'로 처리 (고객앱과 동일하게 UI 동기화)
+                // 바람이 0일 경우 방향을 '정온(바람없음)'으로 처리
                 if (parseFloat(mappedWind) === 0) {
-                    mappedWindDir = 'C';
+                    mappedWindDir = '정온';
                 }
 
                 if(tempEl) tempEl.textContent = mappedTemp;
@@ -152,13 +162,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if(rainRateEl) rainRateEl.textContent = `${mappedRainRate} mm/h`;
                 if(rain24hEl) rain24hEl.textContent = `${mappedRain24h} mm`;
             }
-            
-            // Also fetch cumulative rainfall from DB (for weekly cumulative)
-            const rainRes = await fetch(`${API_BASE}/api/rainfall`);
-            if (rainRes.ok) {
-                const rainData = await rainRes.json();
-                if(weeklyRainEl) weeklyRainEl.textContent = `${rainData.weekly || 0}mm`;
-            }
+                // (Old weekly rain fetch removed as per UI update)
         } catch (e) {
             console.error('Failed to fetch weather data:', e);
             if(tempEl) tempEl.textContent = '--';
@@ -211,6 +215,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnOpenModal.addEventListener('click', () => { modal.style.display = 'flex'; });
     btnCloseModal.addEventListener('click', () => { modal.style.display = 'none'; });
+
+    // Pesticide Reset Button
+    const btnResetRain = document.getElementById('btn-reset-rain');
+    if (btnResetRain) {
+        btnResetRain.addEventListener('click', async () => {
+            if (confirm('현재 시점부터 강수량을 다시 0으로 초기화하시겠습니까? (새로운 중간 리셋 기록이 추가됩니다.)')) {
+                const payload = {
+                    type: 'pesticide_reset',
+                    content: '강수량 초기화 (중간 리셋)',
+                    amount: 0,
+                    date: new Date().toISOString().split('T')[0]
+                };
+                
+                try {
+                    const res = await fetch(`${API_BASE}/api/logs`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (res.ok) {
+                        fetchLogs();
+                        alert('강수량이 초기화되었습니다.');
+                    } else {
+                        alert('초기화에 실패했습니다.');
+                    }
+                } catch (e) {
+                    console.error('Failed to reset rain:', e);
+                    alert('네트워크 오류가 발생했습니다.');
+                }
+            }
+        });
+    }
 
     // Handle form dynamic fields based on log type
     logTypeSelect.addEventListener('change', (e) => {
@@ -469,18 +505,82 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             weatherStatsTbody.innerHTML = '';
+            
+            // Grouping logic
+            const grouped = {};
             dates.forEach(date => {
                 const stat = data[date];
-                const tr = document.createElement('tr');
-                tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
-                tr.innerHTML = `
-                    <td style="padding: 0.75rem;">${date}</td>
-                    <td style="padding: 0.75rem; color: var(--danger-color);">${(stat.maxTemp || 0).toFixed(1)}°C</td>
-                    <td style="padding: 0.75rem; color: var(--info-color);">${(stat.minTemp || 0).toFixed(1)}°C</td>
-                    <td style="padding: 0.75rem; color: var(--accent-hover);">${(stat.rain24h || 0).toFixed(1)}mm</td>
-                `;
-                weatherStatsTbody.appendChild(tr);
+                const d = new Date(date);
+                const year = d.getFullYear();
+                const month = d.getMonth() + 1;
+                
+                // Calculate week of the month (1~5)
+                const firstDayOfMonth = new Date(year, month - 1, 1).getDay();
+                const dateNum = d.getDate();
+                const weekOfMonth = Math.ceil((dateNum + firstDayOfMonth) / 7);
+                
+                if (!grouped[year]) grouped[year] = { totalRain: 0, months: {} };
+                if (!grouped[year].months[month]) grouped[year].months[month] = { totalRain: 0, weeks: {} };
+                if (!grouped[year].months[month].weeks[weekOfMonth]) grouped[year].months[month].weeks[weekOfMonth] = { totalRain: 0, days: [] };
+                
+                const rain = stat.rain24h || 0;
+                grouped[year].totalRain += rain;
+                grouped[year].months[month].totalRain += rain;
+                grouped[year].months[month].weeks[weekOfMonth].totalRain += rain;
+                grouped[year].months[month].weeks[weekOfMonth].days.push({ date, stat });
             });
+            
+            // Render table rows
+            for (const year of Object.keys(grouped).sort((a, b) => b - a)) {
+                const yearData = grouped[year];
+                for (const month of Object.keys(yearData.months).sort((a, b) => b - a)) {
+                    const monthData = yearData.months[month];
+                    for (const week of Object.keys(monthData.weeks).sort((a, b) => b - a)) {
+                        const weekData = monthData.weeks[week];
+                        
+                        // 1. Daily rows
+                        weekData.days.forEach(day => {
+                            const tr = document.createElement('tr');
+                            tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+                            tr.innerHTML = `
+                                <td style="padding: 0.75rem;">${day.date}</td>
+                                <td style="padding: 0.75rem; color: var(--danger-color);">${(day.stat.maxTemp || 0).toFixed(1)}°C</td>
+                                <td style="padding: 0.75rem; color: var(--info-color);">${(day.stat.minTemp || 0).toFixed(1)}°C</td>
+                                <td style="padding: 0.75rem; color: var(--accent-hover);">${(day.stat.rain24h || 0).toFixed(1)}mm</td>
+                            `;
+                            weatherStatsTbody.appendChild(tr);
+                        });
+                        
+                        // 2. Weekly subtotal row
+                        const wTr = document.createElement('tr');
+                        wTr.style.background = 'rgba(255,255,255,0.03)';
+                        wTr.innerHTML = `
+                            <td colspan="3" style="padding: 0.5rem; text-align: right; color: var(--text-secondary); font-size: 0.85rem;">${month}월 ${week}주차 소계</td>
+                            <td style="padding: 0.5rem; color: var(--accent-hover); font-weight: bold; font-size: 0.9rem;">${weekData.totalRain.toFixed(1)}mm</td>
+                        `;
+                        weatherStatsTbody.appendChild(wTr);
+                    }
+                    
+                    // 3. Monthly total row
+                    const mTr = document.createElement('tr');
+                    mTr.style.background = 'rgba(255,255,255,0.05)';
+                    mTr.innerHTML = `
+                        <td colspan="3" style="padding: 0.75rem; text-align: right; color: var(--text-primary); font-weight: bold;">${year}년 ${month}월 합계</td>
+                        <td style="padding: 0.75rem; color: var(--accent-color); font-weight: bold; font-size: 1.1rem;">${monthData.totalRain.toFixed(1)}mm</td>
+                    `;
+                    weatherStatsTbody.appendChild(mTr);
+                }
+                
+                // 4. Yearly total row
+                const yTr = document.createElement('tr');
+                yTr.style.background = 'rgba(59, 130, 246, 0.1)';
+                yTr.innerHTML = `
+                    <td colspan="3" style="padding: 1rem; text-align: right; color: var(--text-primary); font-weight: bold; font-size: 1.1rem;">${year}년 연간 총계</td>
+                    <td style="padding: 1rem; color: var(--accent-color); font-weight: bold; font-size: 1.25rem;">${yearData.totalRain.toFixed(1)}mm</td>
+                `;
+                weatherStatsTbody.appendChild(yTr);
+            }
+            
         } catch (e) {
             console.error('Failed to load weather stats', e);
             weatherStatsTbody.innerHTML = '<tr><td colspan="4" style="padding: 2rem; color: var(--danger-color);">통계 데이터를 불러오지 못했습니다.</td></tr>';
