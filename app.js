@@ -150,10 +150,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (item.code === 'rain_24h') mappedRain24h = (item.value / 10).toFixed(1);
                 });
                 
-                // 바람이 0일 경우 방향을 '정온(바람없음)'으로 처리
-                if (parseFloat(mappedWind) === 0) {
-                    mappedWindDir = '정온';
-                }
+                // 바람이 0일 때 강제로 방위를 설정하던 기존(C 등) 로직을 모두 제거합니다.
+                // Tuya API가 풍향 데이터를 주지 않으므로, 주어지지 않으면 그냥 빈 문자열을 출력합니다.
 
                 if(tempEl) tempEl.textContent = mappedTemp;
                 if(humEl) humEl.textContent = `${mappedHum}%`;
@@ -271,6 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const badgeMap = {
         pesticide: { text: '농약', class: 'badge-pesticide' },
+        pesticide_reset: { text: '초기화', class: 'badge-other' },
         pruning: { text: '전정', class: 'badge-pruning' },
         fertilizer: { text: '비료', class: 'badge-fertilizer' },
         weeding: { text: '제초', class: 'badge-weeding' },
@@ -279,6 +278,8 @@ document.addEventListener('DOMContentLoaded', () => {
         sales: { text: '판매', class: 'badge-sales' },
         other: { text: '기타', class: 'badge-other' }
     };
+
+    let currentLogsData = [];
 
     async function fetchLogs() {
         try {
@@ -294,12 +295,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Update Log List
             logList.innerHTML = '';
-            if (data.logs.length === 0) {
+            currentLogsData = data.logs || [];
+            
+            if (currentLogsData.length === 0) {
                 logList.innerHTML = '<li class="empty-log">기록이 없습니다.</li>';
             } else {
-                data.logs.forEach(log => {
+                currentLogsData.forEach(log => {
                     const li = document.createElement('li');
                     li.className = 'log-item';
+                    li.style.cursor = 'pointer'; // Make it look clickable
+                    li.dataset.logId = log._id;
                     
                     const badgeInfo = badgeMap[log.type] || { text: '기타', class: '' };
                     
@@ -321,6 +326,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="log-text">${log.content || '내용 없음'}</div>
                         ${amountHtml}
                     `;
+                    
+                    li.addEventListener('click', () => openDetailModal(log));
                     logList.appendChild(li);
                 });
             }
@@ -369,6 +376,120 @@ document.addEventListener('DOMContentLoaded', () => {
             fetchLogs(); // Refresh data
         } catch (error) {
             alert('기록 저장에 실패했습니다. (서버 연결을 확인하세요)');
+        }
+    });
+    
+    // Detailed Log Modal Elements
+    const detailModal = document.getElementById('log-detail-modal');
+    const btnCloseDetailModal = document.getElementById('btn-close-detail-modal');
+    const detailLogId = document.getElementById('detail-log-id');
+    const detailLogDate = document.getElementById('detail-log-date');
+    const detailLogType = document.getElementById('detail-log-type');
+    const detailAmountGroup = document.getElementById('detail-amount-group');
+    const detailAmountLabel = document.getElementById('detail-amount-label');
+    const detailLogAmount = document.getElementById('detail-log-amount');
+    const detailAmountUnitSelect = document.getElementById('detail-amount-unit-select');
+    const detailAmountUnitText = document.getElementById('detail-amount-unit-text');
+    const detailRevenueGroup = document.getElementById('detail-revenue-group');
+    const detailLogRevenue = document.getElementById('detail-log-revenue');
+    const detailLogMemo = document.getElementById('detail-log-memo');
+    const detailLogWeather = document.getElementById('detail-log-weather');
+    const btnUpdateLog = document.getElementById('btn-update-log');
+    const btnDeleteLog = document.getElementById('btn-delete-log');
+
+    btnCloseDetailModal.addEventListener('click', () => { detailModal.style.display = 'none'; });
+
+    detailLogType.addEventListener('change', (e) => {
+        const val = e.target.value;
+        if (val === 'harvest') {
+            detailAmountGroup.style.display = 'flex';
+            detailRevenueGroup.style.display = 'none';
+            detailAmountLabel.textContent = '수확량';
+            detailAmountUnitSelect.style.display = 'inline-block';
+            detailAmountUnitText.style.display = 'none';
+        } else if (val === 'sales') {
+            detailAmountGroup.style.display = 'flex';
+            detailRevenueGroup.style.display = 'flex';
+            detailAmountLabel.textContent = '판매 수량';
+            detailAmountUnitSelect.style.display = 'inline-block';
+            detailAmountUnitText.style.display = 'none';
+        } else {
+            detailAmountGroup.style.display = 'none';
+            detailRevenueGroup.style.display = 'none';
+        }
+    });
+
+    function openDetailModal(log) {
+        detailLogId.value = log._id;
+        detailLogDate.value = log.date;
+        detailLogType.value = log.type;
+        detailLogType.dispatchEvent(new Event('change')); // Trigger visibility logic
+        
+        detailLogAmount.value = log.amount || '';
+        if (log.unit === '관') detailAmountUnitSelect.value = '관';
+        else detailAmountUnitSelect.value = 'kg';
+        
+        detailLogRevenue.value = log.revenue || '';
+        detailLogMemo.value = log.content || '';
+        
+        // Render weather info if available
+        if (log.weather) {
+            const conditionText = log.weather.condition || '맑음';
+            let conditionIcon = '<i class="fa-solid fa-sun"></i>';
+            if (conditionText === '비') conditionIcon = '<i class="fa-solid fa-cloud-rain"></i>';
+            else if (conditionText === '흐림') conditionIcon = '<i class="fa-solid fa-cloud"></i>';
+            
+            detailLogWeather.innerHTML = `
+                <div><span style="color:var(--text-primary); font-weight:bold;">${conditionIcon} ${conditionText}</span></div>
+                <div><span style="color:var(--danger-color);"><i class="fa-solid fa-temperature-arrow-up"></i> ${(log.weather.maxTemp || 0).toFixed(1)}°C</span></div>
+                <div><span style="color:var(--info-color);"><i class="fa-solid fa-temperature-arrow-down"></i> ${(log.weather.minTemp || 0).toFixed(1)}°C</span></div>
+                <div><span style="color:var(--accent-hover);"><i class="fa-solid fa-cloud-showers-heavy"></i> ${(log.weather.rain24h || 0).toFixed(1)}mm</span></div>
+            `;
+        } else {
+            detailLogWeather.innerHTML = '<div style="color: var(--text-secondary); width: 100%; text-align: center;">저장된 기상 정보가 없습니다.</div>';
+        }
+        
+        detailModal.style.display = 'flex';
+    }
+
+    btnUpdateLog.addEventListener('click', async () => {
+        const id = detailLogId.value;
+        const payload = {
+            date: detailLogDate.value,
+            type: detailLogType.value,
+            amount: detailLogAmount.value || 0,
+            unit: detailAmountUnitSelect.style.display !== 'none' ? detailAmountUnitSelect.value : 'kg',
+            revenue: detailLogRevenue.value || 0,
+            content: detailLogMemo.value
+        };
+
+        try {
+            const res = await fetch(`${API_BASE}/api/logs/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) throw new Error('API Error');
+            detailModal.style.display = 'none';
+            fetchLogs();
+        } catch (error) {
+            alert('수정에 실패했습니다.');
+        }
+    });
+
+    btnDeleteLog.addEventListener('click', async () => {
+        const id = detailLogId.value;
+        if (confirm('이 농사일지 기록을 정말 삭제하시겠습니까?')) {
+            try {
+                const res = await fetch(`${API_BASE}/api/logs/${id}`, {
+                    method: 'DELETE'
+                });
+                if (!res.ok) throw new Error('API Error');
+                detailModal.style.display = 'none';
+                fetchLogs();
+            } catch (error) {
+                alert('삭제에 실패했습니다.');
+            }
         }
     });
     

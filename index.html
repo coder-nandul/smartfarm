@@ -91,6 +91,21 @@
                             </div>
                         </div>
                     </div>
+                    <!-- Pesticide / Rainfall Tracker moved here -->
+                    <div class="pesticide-tracker" style="padding: 1rem; margin-top: 1rem; background: rgba(0,0,0,0.2); border-radius: 0.5rem;">
+                        <div class="tracker-info" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: nowrap; gap: 0.5rem;">
+                            <div style="flex-shrink: 1; min-width: 0;">
+                                <h3 style="margin-bottom:0.25rem; font-size: clamp(0.8rem, 2.5vw, 1rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><i class="fa-solid fa-spray-can"></i> 최근 농약: <span id="last-pesticide-date" style="color:var(--text-primary);">기록 없음</span></h3>
+                            </div>
+                            <div style="text-align: right; display: flex; flex-direction: column; align-items: flex-end; flex-shrink: 0;">
+                                <span style="font-size: clamp(0.65rem, 2vw, 0.75rem); color:var(--text-secondary); white-space: nowrap;">살포 후 누적 강수량</span>
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <div class="value highlight-danger" id="pesticide-rain-val" style="font-size: clamp(1rem, 3vw, 1.25rem); font-weight:bold; white-space: nowrap;">0.0mm</div>
+                                    <button id="btn-reset-rain" class="action-btn-small" style="background-color: var(--card-bg); color: var(--text-primary); border: 1px solid var(--border-color); white-space: nowrap; font-size: clamp(0.7rem, 2vw, 0.85rem); padding: 0.25rem 0.5rem;"><i class="fa-solid fa-rotate-left"></i> 0으로 초기화</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -119,21 +134,6 @@
                         </div>
                     </div>
 
-                    <!-- Pesticide / Rainfall Tracker -->
-                    <div class="pesticide-tracker" style="padding: 1rem; margin-top: 0;">
-                        <div class="tracker-info" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
-                            <div>
-                                <h3 style="margin-bottom:0.25rem;"><i class="fa-solid fa-spray-can"></i> 최근 농약 살포: <span id="last-pesticide-date" style="color:var(--text-primary); font-size:1rem;">기록 없음</span></h3>
-                            </div>
-                            <div style="text-align: right; display: flex; flex-direction: column; align-items: flex-end;">
-                                <span style="font-size: 0.75rem; color:var(--text-secondary);">살포 후 누적 강수량</span>
-                                <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                    <div class="value highlight-danger" id="pesticide-rain-val" style="font-size:1.25rem; font-weight:bold;">0.0mm</div>
-                                    <button id="btn-reset-rain" class="action-btn-small" style="background-color: var(--card-bg); color: var(--text-primary); border: 1px solid var(--border-color);"><i class="fa-solid fa-rotate-left"></i> 0으로 초기화</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
 
                     <div class="log-list-container">
                         <h3>최근 기록</h3>
@@ -264,6 +264,70 @@
                 </div>
                 <button type="submit" class="action-btn" style="margin-top:1rem;">기록 저장</button>
             </form>
+        </div>
+    </div>
+
+    <!-- Modal for Viewing/Editing/Deleting Log -->
+    <div id="log-detail-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>농사일지 상세</h2>
+                <button id="btn-close-detail-modal" class="icon-btn-ghost"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body" style="padding: 1rem 0;">
+                <input type="hidden" id="detail-log-id">
+                <div class="form-group">
+                    <label>작업 날짜</label>
+                    <input type="date" id="detail-log-date" required>
+                </div>
+                <div class="form-group">
+                    <label>작업 종류</label>
+                    <select id="detail-log-type" required>
+                        <option value="pesticide">농약 살포</option>
+                        <option value="pesticide_reset">강수량 중간 리셋</option>
+                        <option value="pruning">전정 (가지치기)</option>
+                        <option value="fertilizer">비료 주기</option>
+                        <option value="weeding">제초 (풀뽑기)</option>
+                        <option value="water">관수 (물주기)</option>
+                        <option value="harvest">수확</option>
+                        <option value="sales">판매</option>
+                        <option value="other">기타 (직접 입력)</option>
+                    </select>
+                </div>
+                <div class="form-group" id="detail-amount-group" style="display: none;">
+                    <label id="detail-amount-label">수량</label>
+                    <div class="input-with-unit">
+                        <input type="number" id="detail-log-amount" min="0" step="0.1">
+                        <select id="detail-amount-unit-select" class="unit-select" style="display:none; border:none; background:transparent; color:var(--accent-hover); font-weight:600; cursor:pointer;">
+                            <option value="kg">kg</option>
+                            <option value="관">관 (3.75kg)</option>
+                        </select>
+                        <span class="unit" id="detail-amount-unit-text">kg</span>
+                    </div>
+                </div>
+                <div class="form-group" id="detail-revenue-group" style="display: none;">
+                    <label>판매 금액</label>
+                    <div class="input-with-unit">
+                        <input type="number" id="detail-log-revenue" min="0" step="1000">
+                        <span class="unit">원 (₩)</span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>메모 사항</label>
+                    <textarea id="detail-log-memo" rows="3" placeholder="내용 없음"></textarea>
+                </div>
+                <!-- Weather Info Section -->
+                <div class="form-group" style="background: rgba(255,255,255,0.05); padding: 0.75rem; border-radius: 0.5rem; margin-top: 1rem;">
+                    <label style="margin-bottom: 0.5rem; font-size: 0.85rem; color: var(--text-secondary);"><i class="fa-solid fa-cloud-sun"></i> 당일 기상 정보</label>
+                    <div id="detail-log-weather" style="display: flex; justify-content: space-between; font-size: 0.9rem;">
+                        <!-- Injected via JS -->
+                    </div>
+                </div>
+                <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+                    <button id="btn-update-log" class="action-btn" style="flex: 1;"><i class="fa-solid fa-floppy-disk"></i> 수정 저장</button>
+                    <button id="btn-delete-log" class="action-btn-small" style="flex: 1; background: var(--danger-color); color: white; border: none;"><i class="fa-solid fa-trash"></i> 삭제</button>
+                </div>
+            </div>
         </div>
     </div>
 

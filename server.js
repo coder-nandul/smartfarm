@@ -39,7 +39,13 @@ const LogSchema = new mongoose.Schema({
     amount: { type: Number, default: 0 },
     unit: { type: String, default: 'kg' },
     revenue: { type: Number, default: 0 },
-    date: String // YYYY-MM-DD
+    date: String, // YYYY-MM-DD
+    weather: {
+        maxTemp: Number,
+        minTemp: Number,
+        rain24h: Number,
+        condition: String
+    }
 });
 const Log = mongoose.model('Log', LogSchema);
 
@@ -53,7 +59,8 @@ const WeatherStatSchema = new mongoose.Schema({
     date: { type: String, unique: true }, // YYYY-MM-DD
     minTemp: Number,
     maxTemp: Number,
-    rain24h: { type: Number, default: 0 }
+    rain24h: { type: Number, default: 0 },
+    condition: { type: String, default: '맑음' }
 });
 const WeatherStat = mongoose.model('WeatherStat', WeatherStatSchema);
 
@@ -120,13 +127,23 @@ app.post('/api/logs', async (req, res) => {
         const { type, content, amount, unit, revenue, date } = req.body;
         const logDate = date || new Date().toISOString().split('T')[0];
         
+        // Fetch weather stat for the log date
+        const weatherStat = await WeatherStat.findOne({ date: logDate });
+        const weatherObj = weatherStat ? {
+            maxTemp: weatherStat.maxTemp,
+            minTemp: weatherStat.minTemp,
+            rain24h: weatherStat.rain24h,
+            condition: weatherStat.condition || (weatherStat.rain24h > 0 ? '비' : '맑음')
+        } : null;
+        
         const newLog = new Log({
             type,
             content,
             amount: amount || 0,
             unit: unit || 'kg',
             revenue: revenue || 0,
-            date: logDate
+            date: logDate,
+            weather: weatherObj
         });
         
         await newLog.save();
@@ -134,6 +151,49 @@ app.post('/api/logs', async (req, res) => {
     } catch (e) {
         console.error(e);
         res.status(500).json({ error: 'DB Save Error' });
+    }
+});
+
+app.put('/api/logs/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { type, content, amount, unit, revenue, date } = req.body;
+        
+        const logDate = date || new Date().toISOString().split('T')[0];
+        
+        // Fetch weather stat for the updated date
+        const weatherStat = await WeatherStat.findOne({ date: logDate });
+        const weatherObj = weatherStat ? {
+            maxTemp: weatherStat.maxTemp,
+            minTemp: weatherStat.minTemp,
+            rain24h: weatherStat.rain24h,
+            condition: weatherStat.condition || (weatherStat.rain24h > 0 ? '비' : '맑음')
+        } : null;
+        
+        await Log.findByIdAndUpdate(id, {
+            type,
+            content,
+            amount: amount || 0,
+            unit: unit || 'kg',
+            revenue: revenue || 0,
+            date: logDate,
+            weather: weatherObj
+        });
+        res.json({ success: true });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'DB Update Error' });
+    }
+});
+
+app.delete('/api/logs/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await Log.findByIdAndDelete(id);
+        res.json({ success: true });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'DB Delete Error' });
     }
 });
 
@@ -183,20 +243,36 @@ app.get('/api/weather', async (req, res) => {
         
         let currentTemp = null;
         let currentRain24h = null;
+        let currentUv = null;
         
         statusResponse.result.forEach(item => {
             if (item.code === 'temp_current_external' || item.code === 'temp_current') currentTemp = item.value / 10;
             if (item.code === 'rain_24h') currentRain24h = item.value / 10;
+            if (item.code === 'uv_index') currentUv = item.value;
         });
 
         if (currentTemp !== null && MONGODB_URI) {
             let stat = await WeatherStat.findOne({ date: today });
+            
+            // Heuristic for weather condition
+            let inferredCondition = '맑음';
+            if (currentRain24h > 0) inferredCondition = '비';
+            else if (currentUv !== null && currentUv <= 2) inferredCondition = '흐림';
+            
             if (!stat) {
-                stat = new WeatherStat({ date: today, minTemp: currentTemp, maxTemp: currentTemp, rain24h: currentRain24h || 0 });
+                stat = new WeatherStat({ 
+                    date: today, 
+                    minTemp: currentTemp, 
+                    maxTemp: currentTemp, 
+                    rain24h: currentRain24h || 0,
+                    condition: inferredCondition
+                });
             } else {
                 stat.minTemp = Math.min(stat.minTemp, currentTemp);
                 stat.maxTemp = Math.max(stat.maxTemp, currentTemp);
                 stat.rain24h = Math.max(stat.rain24h || 0, currentRain24h || 0);
+                if (currentRain24h > 0) stat.condition = '비';
+                else if (stat.condition !== '비') stat.condition = inferredCondition;
             }
             await stat.save();
         }
