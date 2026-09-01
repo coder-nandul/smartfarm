@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>스마트팜 대시보드 - Smart Farm</title>
+    <!-- Modern Typography: Outfit & Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <header class="dashboard-header">
+            <div class="header-left">
+                <h1>Farm Control Center</h1>
+                <div class="wifi-status-container">
+                    <div id="wifi-indicator" class="wifi-indicator online">
+                        <i class="fa-solid fa-wifi"></i>
+                    </div>
+                    <span id="wifi-text" class="wifi-text">시스템 연결됨 (LTE: CLM920-3376)</span>
+                </div>
+            </div>
+            <div class="header-datetime">
+                <div class="date-box">
+                    <div id="current-date" class="date-text">YYYY.MM.DD</div>
+                    <div id="current-day" class="day-text">Day</div>
+                </div>
+                <div class="time-box">
+                    <div id="current-time">00:00:00</div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Multi-Farm Tab Navigation -->
+        <nav class="farm-tabs">
+            <button class="tab-btn active" data-target="tab-seohong"><i class="fa-solid fa-leaf"></i> 서홍동 (Seohong)</button>
+            <button class="tab-btn" data-target="tab-haye"><i class="fa-solid fa-seedling"></i> 하예동 (Haye)</button>
+            <button class="tab-btn" data-target="tab-hawon"><i class="fa-solid fa-tree"></i> 하원동 (Hawon)</button>
+            <button class="tab-btn" data-target="tab-hahyo"><i class="fa-solid fa-lemon"></i> 하효동 (Hahyo)</button>
+        </nav>
+
+        <!-- 1. 서홍동 (Active) -->
+        <main id="tab-seohong" class="dashboard-grid tab-content active">
+            <!-- Weather Station Panel -->
+            <section class="glass-panel weather-panel">
+                <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display:flex; align-items:center; gap:0.5rem;">
+                        <h2 id="weather-panel-title"><i class="fas fa-cloud-sun-rain"></i> 기상대</h2>
+                        <div class="status-indicator active"></div>
+                    </div>
+                    <button id="btn-open-weather-modal" class="action-btn-small"><i class="fa-solid fa-chart-line"></i> 통계 보기</button>
+                </div>
+                <div class="weather-content">
+                    <div class="main-temp">
+                        <span id="temp-val">24.5</span><span class="unit">°C</span>
+                    </div>
+                    <div class="weather-details">
+                        <div class="detail-item">
+                            <i class="fa-solid fa-droplet"></i>
+                            <div class="detail-info">
+                                <span class="label">습도</span>
+                                <span class="value" id="hum-val">--%</span>
+                            </div>
+                        </div>
+                        <div class="detail-item">
+                            <i class="fa-solid fa-wind"></i>
+                            <div class="detail-info">
+                                <span class="label">풍향 / 현재 풍속</span>
+                                <div>
+                                    <span class="value" id="wind-dir-val" style="font-size:1rem; margin-right:0.25rem;">--</span>
+                                    <span class="value" id="wind-val">-- m/s</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="detail-item">
+                            <i class="fa-solid fa-cloud-rain"></i>
+                            <div class="detail-info">
+                                <span class="label">실시간 강수량</span>
+                                <span class="value" id="rain-rate-val">-- mm/h</span>
+                            </div>
+                        </div>
+                        <div class="detail-item">
+                            <i class="fa-solid fa-cloud-showers-heavy"></i>
+                            <div class="detail-info">
+                                <span class="label">24시간 누적 강수량</span>
+                                <span class="value" id="rain-24h-val">-- mm</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cumulative-rain-box">
+                        <i class="fa-solid fa-droplet"></i> 
+                        <span>최근 7일 누적 강수량: </span>
+                        <strong id="weekly-rain-val">0.0mm</strong>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Farming Log Panel (Mini ERP) -->
+            <section class="glass-panel log-panel">
+                <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <h2><i class="fa-solid fa-book-open"></i> 농사일지 (작물 관리)</h2>
+                    <button id="btn-open-modal" class="action-btn-small"><i class="fa-solid fa-plus"></i> 새 기록</button>
+                </div>
+                <div class="log-content">
+                    <!-- Annual Stats Cards -->
+                    <div class="erp-stats-container">
+                        <div class="erp-stat-card harvest-card">
+                            <i class="fa-solid fa-wheat-awn"></i>
+                            <div class="stat-info">
+                                <span class="stat-label">올해 총 수확량</span>
+                                <span class="stat-value"><span id="annual-harvest-val">0</span> kg</span>
+                            </div>
+                        </div>
+                        <div class="erp-stat-card sales-card">
+                            <i class="fa-solid fa-won-sign"></i>
+                            <div class="stat-info">
+                                <span class="stat-label">올해 총 매출액</span>
+                                <span class="stat-value"><span id="annual-sales-val">0</span> 원</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pesticide / Rainfall Tracker -->
+                    <div class="pesticide-tracker" style="padding: 1rem; margin-top: 0;">
+                        <div class="tracker-info" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
+                            <div>
+                                <h3 style="margin-bottom:0.25rem;"><i class="fa-solid fa-spray-can"></i> 최근 농약 살포: <span id="last-pesticide-date" style="color:var(--text-primary); font-size:1rem;">기록 없음</span></h3>
+                            </div>
+                            <div style="text-align: right;">
+                                <span style="font-size: 0.75rem; color:var(--text-secondary);">살포 후 누적 강수량</span>
+                                <div class="value highlight-danger" id="pesticide-rain-val" style="font-size:1.25rem; font-weight:bold;">0.0mm</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="log-list-container">
+                        <h3>최근 기록</h3>
+                        <ul id="farming-log-list" class="log-list">
+                            <li class="empty-log">기록이 없습니다.</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- CCTV Panel -->
+            <section class="glass-panel cctv-panel">
+                <div class="panel-header">
+                    <h2><i class="fa-solid fa-video"></i> 농장 CCTV (On-Demand)</h2>
+                    <div class="status-indicator"></div>
+                </div>
+                <div class="cctv-viewer">
+                    <!-- CCTV On-Demand Trigger -->
+                    <div class="cctv-placeholder" id="cctv-container">
+                        <div class="camera-status" id="cctv-overlay">
+                            <i class="fa-solid fa-video-slash"></i>
+                            <p>CCTV 스트리밍 대기 중</p>
+                            <small>데이터 절약을 위해 필요할 때만 연결합니다.</small>
+                            <button id="btn-connect-cctv" class="app-link-btn" style="margin-top:1rem; cursor:pointer; padding:0.75rem 1.5rem; background:var(--accent-color); color:white; border:none; border-radius:0.5rem; font-weight:600; font-size:1rem; transition: transform 0.2s;">
+                                <i class="fa-solid fa-link"></i> CCTV 연결하기
+                            </button>
+                        </div>
+                        <div id="cctv-instructions" style="display:none; text-align:center; padding: 2rem;">
+                            <i class="fa-solid fa-desktop" style="font-size: 3rem; color: var(--success-color); margin-bottom: 1rem;"></i>
+                            <h3 style="margin-bottom: 0.5rem;">PC 전용 프로그램 실행</h3>
+                            <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">통신사 외부망 보안 정책으로 인해<br>안정적인 전용 프로그램(VMS)으로 연결합니다.</p>
+                            <a href="icsee://" class="app-link-btn" style="display:inline-block; padding:0.5rem 1rem; background:var(--success-color); color:white; border-radius:0.5rem; text-decoration:none; font-weight:500;">iCSee 프로그램 열기</a>
+                            <button id="btn-close-cctv" style="display:block; margin: 1rem auto 0; background:none; border:none; color:var(--text-secondary); cursor:pointer; text-decoration:underline;">연결 종료</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- WiFi Switches Panel -->
+            <section class="glass-panel switch-panel">
+                <div class="panel-header">
+                    <h2><i class="fa-solid fa-plug-circle-bolt"></i> 스마트 스위치 제어</h2>
+                    <div class="status-indicator active"></div>
+                </div>
+                <div class="switch-grid" id="dynamic-switch-grid">
+                    <!-- Switches will be dynamically generated here based on Tuya API response -->
+                    <div style="color:var(--text-secondary); text-align:center; padding: 2rem; grid-column: 1 / -1;">
+                        <i class="fa-solid fa-spinner fa-spin"></i> 스위치 상태를 가져오는 중...
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 2. 하예동 (Skeleton) -->
+        <main id="tab-haye" class="dashboard-grid tab-content">
+            <div class="skeleton-container" style="grid-column: 1 / -1;">
+                <i class="fa-solid fa-hammer"></i>
+                <h3>하예동 스마트팜 준비 중</h3>
+                <p>장비가 설치되고 시스템이 연동되면 대시보드가 활성화됩니다.</p>
+            </div>
+        </main>
+
+        <!-- 3. 하원동 (Skeleton) -->
+        <main id="tab-hawon" class="dashboard-grid tab-content">
+            <div class="skeleton-container" style="grid-column: 1 / -1;">
+                <i class="fa-solid fa-hammer"></i>
+                <h3>하원동 스마트팜 준비 중</h3>
+                <p>장비가 설치되고 시스템이 연동되면 대시보드가 활성화됩니다.</p>
+            </div>
+        </main>
+
+        <!-- 4. 하효동 (Skeleton) -->
+        <main id="tab-hahyo" class="dashboard-grid tab-content">
+            <div class="skeleton-container" style="grid-column: 1 / -1;">
+                <i class="fa-solid fa-hammer"></i>
+                <h3>하효동 스마트팜 준비 중</h3>
+                <p>장비가 설치되고 시스템이 연동되면 대시보드가 활성화됩니다.</p>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal for New Log Entry -->
+    <div id="log-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>새 농사일지 기록</h2>
+                <button id="btn-close-modal" class="icon-btn-ghost"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <form id="log-form" class="modal-form">
+                <div class="form-group">
+                    <label>작업 날짜</label>
+                    <input type="date" id="log-date" required>
+                </div>
+                <div class="form-group">
+                    <label>작업 종류</label>
+                    <select id="log-type" required>
+                        <option value="pesticide">농약 살포</option>
+                        <option value="pruning">전정 (가지치기)</option>
+                        <option value="fertilizer">비료 주기</option>
+                        <option value="weeding">제초 (풀뽑기)</option>
+                        <option value="water">관수 (물주기)</option>
+                        <option value="harvest">수확</option>
+                        <option value="sales">판매</option>
+                        <option value="other">기타 (직접 입력)</option>
+                    </select>
+                </div>
+                <div class="form-group" id="amount-group" style="display: none;">
+                    <label id="amount-label">수량</label>
+                    <div class="input-with-unit">
+                        <input type="number" id="log-amount" min="0" step="0.1">
+                        <select id="amount-unit-select" class="unit-select" style="display:none; border:none; background:transparent; color:var(--accent-hover); font-weight:600; cursor:pointer;">
+                            <option value="kg">kg</option>
+                            <option value="관">관 (3.75kg)</option>
+                        </select>
+                        <span class="unit" id="amount-unit-text">kg</span>
+                    </div>
+                </div>
+                <div class="form-group" id="revenue-group" style="display: none;">
+                    <label>판매 금액</label>
+                    <div class="input-with-unit">
+                        <input type="number" id="log-revenue" min="0" step="1000">
+                        <span class="unit">원 (₩)</span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>메모 사항</label>
+                    <textarea id="log-memo" rows="3" placeholder="사용한 약제, 비료 종류, 거래처 등 상세 내용을 적어주세요."></textarea>
+                </div>
+                <button type="submit" class="action-btn" style="margin-top:1rem;">기록 저장</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal for Weather Stats -->
+    <div id="weather-stats-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2>기상 데이터 일일 통계</h2>
+                <button id="btn-close-weather-modal" class="icon-btn-ghost"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body" style="padding: 1rem 0;">
+                <p style="color:var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
+                    * 백엔드 서버가 구동 중인 기간 동안 수집된 일일 자체 누적 통계입니다.
+                </p>
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; text-align: center;">
+                        <thead>
+                            <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary);">
+                                <th style="padding: 0.75rem;">날짜</th>
+                                <th style="padding: 0.75rem;">최고 온도</th>
+                                <th style="padding: 0.75rem;">최저 온도</th>
+                                <th style="padding: 0.75rem;">24H 최대 강수량</th>
+                            </tr>
+                        </thead>
+                        <tbody id="weather-stats-tbody">
+                            <tr>
+                                <td colspan="4" style="padding: 2rem; color: var(--text-secondary);">데이터를 불러오는 중...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

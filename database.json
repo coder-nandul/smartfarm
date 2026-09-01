@@ -1,0 +1,61 @@
+{
+  "logs": [
+    {
+      "id": "1786962656917",
+      "type": "pesticide",
+      "content": "123",
+      "amount": 0,
+      "unit": "kg",
+      "revenue": 0,
+      "date": "2026-08-17"
+    }
+  ],
+  "dailyRainfall": {},
+  "weatherStats": {
+    "2026-08-17": {
+      "minTemp": 25.7,
+      "maxTemp": 26.2,
+      "rain24h": 65.9
+    },
+    "2026-08-18": {
+      "minTemp": 26.2,
+      "maxTemp": 29.6,
+      "rain24h": 56.2
+    },
+    "2026-08-19": {
+      "minTemp": 24.7,
+      "maxTemp": 24.7,
+      "rain24h": 4
+    },
+    "2026-08-20": {
+      "minTemp": 26.5,
+      "maxTemp": 32,
+      "rain24h": 0
+    },
+    "2026-08-21": {
+      "minTemp": 27.7,
+      "maxTemp": 28.7,
+      "rain24h": 0
+    },
+    "2026-08-22": {
+      "minTemp": 28.6,
+      "maxTemp": 28.6,
+      "rain24h": 3.4
+    },
+    "2026-08-23": {
+      "minTemp": 26.5,
+      "maxTemp": 26.9,
+      "rain24h": 3.2
+    },
+    "2026-08-25": {
+      "minTemp": 28.7,
+      "maxTemp": 28.7,
+      "rain24h": 0
+    },
+    "2026-08-26": {
+      "minTemp": 32.5,
+      "maxTemp": 32.5,
+      "rain24h": 0
+    }
+  }
+}
