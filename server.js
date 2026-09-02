@@ -65,6 +65,89 @@ const WeatherStatSchema = new mongoose.Schema({
 const WeatherStat = mongoose.model('WeatherStat', WeatherStatSchema);
 
 
+// --- In-Memory Caching & Background Polling for Tuya API ---
+const weatherCache = { data: null, lastFetch: 0 };
+const switchCache = {}; // { [id]: { data: any, lastFetch: number } }
+
+async function pollWeather() {
+    if (!process.env.TUYA_WEATHER_STATION_ID) return;
+    try {
+        const deviceId = process.env.TUYA_WEATHER_STATION_ID;
+        const [infoResponse, statusResponse] = await Promise.all([
+            tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}` }),
+            tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
+        ]);
+        
+        weatherCache.data = {
+            name: infoResponse.result.name,
+            status: statusResponse.result
+        };
+        weatherCache.lastFetch = Date.now();
+        
+        // Log Statistics to MongoDB
+        if (MONGODB_URI) {
+            const today = new Date(new Date().getTime() + 9 * 3600 * 1000).toISOString().split('T')[0]; // KST
+            let currentTemp = null;
+            let currentRain24h = null;
+            let currentUv = null;
+            
+            statusResponse.result.forEach(item => {
+                if (item.code === 'temp_current_external' || item.code === 'temp_current') currentTemp = item.value / 10;
+                if (item.code === 'rain_24h') currentRain24h = item.value / 10;
+                if (item.code === 'uv_index') currentUv = item.value;
+            });
+
+            if (currentTemp !== null) {
+                let stat = await WeatherStat.findOne({ date: today });
+                
+                let inferredCondition = '맑음';
+                if (currentRain24h > 0) inferredCondition = '비';
+                else if (currentUv !== null && currentUv <= 2) inferredCondition = '흐림';
+                
+                if (!stat) {
+                    stat = new WeatherStat({ 
+                        date: today, minTemp: currentTemp, maxTemp: currentTemp, 
+                        rain24h: currentRain24h || 0, condition: inferredCondition
+                    });
+                } else {
+                    stat.minTemp = Math.min(stat.minTemp, currentTemp);
+                    stat.maxTemp = Math.max(stat.maxTemp, currentTemp);
+                    stat.rain24h = Math.max(stat.rain24h || 0, currentRain24h || 0);
+                    if (currentRain24h > 0) stat.condition = '비';
+                    else if (stat.condition !== '비') stat.condition = inferredCondition;
+                }
+                await stat.save();
+            }
+        }
+    } catch (e) {
+        console.error('Background weather poll error:', e.message);
+    }
+}
+
+async function pollSwitches() {
+    for (const deviceId of Object.keys(switchCache)) {
+        try {
+            const [infoResponse, statusResponse] = await Promise.all([
+                tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}` }),
+                tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
+            ]);
+            switchCache[deviceId].data = {
+                name: infoResponse.result.name,
+                status: statusResponse.result
+            };
+            switchCache[deviceId].lastFetch = Date.now();
+        } catch (e) {
+            console.error(`Background switch poll error (${deviceId}):`, e.message);
+        }
+    }
+}
+
+// Start polling
+setInterval(pollWeather, 30000); // 30s
+setInterval(pollSwitches, 15000); // 15s
+setTimeout(pollWeather, 2000); // Initial fetch
+
+
 // 3. API Endpoints
 
 // Health Check (Wi-Fi Status)
@@ -231,56 +314,19 @@ app.get('/api/weather', async (req, res) => {
     try {
         if (!process.env.TUYA_WEATHER_STATION_ID) return res.json({ error: 'No device ID' });
         
-        const deviceId = process.env.TUYA_WEATHER_STATION_ID;
-        
-        const [infoResponse, statusResponse] = await Promise.all([
-            tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}` }),
-            tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
-        ]);
-        
-        // Log Statistics to MongoDB
-        const today = new Date(new Date().getTime() + 9 * 3600 * 1000).toISOString().split('T')[0]; // KST
-        
-        let currentTemp = null;
-        let currentRain24h = null;
-        let currentUv = null;
-        
-        statusResponse.result.forEach(item => {
-            if (item.code === 'temp_current_external' || item.code === 'temp_current') currentTemp = item.value / 10;
-            if (item.code === 'rain_24h') currentRain24h = item.value / 10;
-            if (item.code === 'uv_index') currentUv = item.value;
-        });
-
-        if (currentTemp !== null && MONGODB_URI) {
-            let stat = await WeatherStat.findOne({ date: today });
-            
-            // Heuristic for weather condition
-            let inferredCondition = '맑음';
-            if (currentRain24h > 0) inferredCondition = '비';
-            else if (currentUv !== null && currentUv <= 2) inferredCondition = '흐림';
-            
-            if (!stat) {
-                stat = new WeatherStat({ 
-                    date: today, 
-                    minTemp: currentTemp, 
-                    maxTemp: currentTemp, 
-                    rain24h: currentRain24h || 0,
-                    condition: inferredCondition
-                });
-            } else {
-                stat.minTemp = Math.min(stat.minTemp, currentTemp);
-                stat.maxTemp = Math.max(stat.maxTemp, currentTemp);
-                stat.rain24h = Math.max(stat.rain24h || 0, currentRain24h || 0);
-                if (currentRain24h > 0) stat.condition = '비';
-                else if (stat.condition !== '비') stat.condition = inferredCondition;
-            }
-            await stat.save();
+        // 캐시 데이터가 있고 60초 이내면 바로 응답
+        if (weatherCache.data && (Date.now() - weatherCache.lastFetch < 60000)) {
+            return res.json(weatherCache.data);
         }
         
-        res.json({
-            name: infoResponse.result.name,
-            status: statusResponse.result
-        });
+        // 캐시가 없거나 오래됐으면 직접 폴링 호출 후 반환
+        await pollWeather();
+        
+        if (weatherCache.data) {
+            res.json(weatherCache.data);
+        } else {
+            res.status(500).json({ error: 'Failed to fetch weather data' });
+        }
     } catch (error) {
         console.error('Error fetching weather data:', error.message);
         res.status(500).json({ error: 'Failed to fetch weather data' });
@@ -308,15 +354,29 @@ app.get('/api/switch/:id', async (req, res) => {
     try {
         const deviceId = req.params.id;
         
+        if (!switchCache[deviceId]) {
+            switchCache[deviceId] = { data: null, lastFetch: 0 };
+        }
+        
+        // 캐시 데이터가 있고 30초 이내면 바로 응답
+        if (switchCache[deviceId].data && (Date.now() - switchCache[deviceId].lastFetch < 30000)) {
+            return res.json(switchCache[deviceId].data);
+        }
+        
         const [infoResponse, statusResponse] = await Promise.all([
             tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}` }),
             tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
         ]);
         
-        res.json({
+        const responseData = {
             name: infoResponse.result.name,
             status: statusResponse.result
-        });
+        };
+        
+        switchCache[deviceId].data = responseData;
+        switchCache[deviceId].lastFetch = Date.now();
+        
+        res.json(responseData);
     } catch (error) {
         console.error('Error fetching switch data:', error.message);
         res.status(500).json({ error: 'Failed to fetch switch data' });
@@ -342,6 +402,12 @@ app.post('/api/switch/:id', async (req, res) => {
                 ]
             }
         });
+        
+        // 제어 성공 후 캐시 즉시 무효화 및 갱신
+        if (switchCache[deviceId]) {
+            switchCache[deviceId].lastFetch = 0;
+            pollSwitches(); // 비동기로 최신 상태 가져오기 시작
+        }
         
         res.json({ success: true, result: response.result });
     } catch (error) {
