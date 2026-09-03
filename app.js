@@ -224,8 +224,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const revenueGroup = document.getElementById('revenue-group');
     const logDateInput = document.getElementById('log-date');
 
-    // Set default date to today
-    const todayStr = new Date().toISOString().split('T')[0];
+    // Set default date to today (KST)
+    const now = new Date();
+    const kstTime = new Date(now.getTime() + 9 * 3600 * 1000);
+    const todayStr = kstTime.toISOString().split('T')[0];
     logDateInput.value = todayStr;
 
     // btnOpenModal event replaced by event delegation('click', () => { modal.style.display = 'flex'; });
