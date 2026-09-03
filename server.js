@@ -162,13 +162,9 @@ app.get('/api/logs', async (req, res) => {
     try {
         const farmId = req.query.farmId || 'seohong';
         const currentYear = new Date().getFullYear().toString();
-        // Legacy data fallback: if querying for 'seohong', include records where farmId is missing
-        const query = farmId === 'seohong' 
-            ? { $or: [{ farmId: 'seohong' }, { farmId: { $exists: false } }] }
-            : { farmId };
-            
+        
         // Optimize: Fetch only current year logs for stats + last pesticide
-        const logs = await Log.find(query).sort({ date: -1 }).lean();
+        const logs = await Log.find({ farmId }).sort({ date: -1 }).lean();
         
         // Find last pesticide date or reset
         const lastPesticide = logs.find(log => log.type === 'pesticide' || log.type === 'pesticide_reset');
@@ -186,6 +182,7 @@ app.get('/api/logs', async (req, res) => {
         }
 
         // Calculate Annual Stats (Current Year)
+        const currentYear = new Date().getFullYear().toString();
         let totalHarvestKg = 0;
         let totalSalesWon = 0;
 
