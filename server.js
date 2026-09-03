@@ -182,7 +182,6 @@ app.get('/api/logs', async (req, res) => {
         }
 
         // Calculate Annual Stats (Current Year)
-        const currentYear = new Date().getFullYear().toString();
         let totalHarvestKg = 0;
         let totalSalesWon = 0;
 
@@ -329,12 +328,16 @@ app.get('/api/weather', async (req, res) => {
     try {
         if (!process.env.TUYA_WEATHER_STATION_ID) return res.json({ error: 'No device ID' });
         
-        // 캐시 데이터가 있고 60초 이내면 바로 응답
-        if (weatherCache.data && (Date.now() - weatherCache.lastFetch < 60000)) {
+        // 캐시 데이터가 있으면 바로 반환하여 속도 최적화
+        if (weatherCache.data) {
+            // 만약 캐시가 너무 오래되었다면 비동기로 폴링 업데이트만 지시
+            if (Date.now() - weatherCache.lastFetch > 60000) {
+                pollWeather().catch(console.error);
+            }
             return res.json(weatherCache.data);
         }
         
-        // 캐시가 없거나 오래됐으면 직접 폴링 호출 후 반환
+        // 캐시가 완전히 비어있는 경우(서버 켜진 직후)에만 대기
         await pollWeather();
         
         if (weatherCache.data) {
@@ -373,11 +376,16 @@ app.get('/api/switch/:id', async (req, res) => {
             switchCache[deviceId] = { data: null, lastFetch: 0 };
         }
         
-        // 캐시 데이터가 있고 30초 이내면 바로 응답
-        if (switchCache[deviceId].data && (Date.now() - switchCache[deviceId].lastFetch < 30000)) {
+        // 캐시 데이터가 있으면 바로 응답하여 속도 최적화
+        if (switchCache[deviceId].data) {
+            if (Date.now() - switchCache[deviceId].lastFetch > 30000) {
+                // 비동기로 데이터 업데이트 트리거
+                pollSwitches().catch(console.error);
+            }
             return res.json(switchCache[deviceId].data);
         }
         
+        // 캐시가 비어있을 때만 직접 API 요청 후 대기
         const [infoResponse, statusResponse] = await Promise.all([
             tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}` }),
             tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
