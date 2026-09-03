@@ -28,7 +28,25 @@ if (!MONGODB_URI) {
     console.warn('⚠️ MONGODB_URI 환경변수가 설정되지 않았습니다. DB 연동이 실패할 수 있습니다.');
 } else {
     mongoose.connect(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-        .then(() => console.log('✅ MongoDB Atlas 연결 성공!'))
+        .then(async () => {
+            console.log('✅ MongoDB Atlas 연결 성공!');
+            // Auto-seed from database.json if MongoDB is empty
+            const fs = require('fs');
+            if (fs.existsSync('./database.json')) {
+                const count = await Log.countDocuments();
+                if (count === 0) {
+                    const localData = JSON.parse(fs.readFileSync('./database.json', 'utf-8'));
+                    if (localData.logs && localData.logs.length > 0) {
+                        await Log.insertMany(localData.logs.map(l => ({
+                            type: l.type, content: l.content, amount: l.amount,
+                            unit: l.unit, revenue: l.revenue, date: l.date,
+                            farmId: l.farmId || 'seohong'
+                        })));
+                        console.log('✅ database.json 기존 농사일지 데이터 마이그레이션 완료!');
+                    }
+                }
+            }
+        })
         .catch(err => console.error('❌ MongoDB 연결 실패:', err));
 }
 
@@ -163,8 +181,20 @@ app.get('/api/logs', async (req, res) => {
         const farmId = req.query.farmId || 'seohong';
         const currentYear = new Date().getFullYear().toString();
         
-        // Optimize: Fetch only current year logs for stats + last pesticide
-        const logs = await Log.find({ farmId }).sort({ date: -1 }).lean();
+        const fs = require('fs');
+        let logs = [];
+        
+        if (mongoose.connection.readyState !== 1) {
+            // 몽고DB 연결 안됨: 로컬 database.json 폴백
+            if (fs.existsSync('./database.json')) {
+                const localData = JSON.parse(fs.readFileSync('./database.json', 'utf-8'));
+                logs = (localData.logs || []).filter(l => (l.farmId || 'seohong') === farmId);
+                logs.sort((a, b) => new Date(b.date) - new Date(a.date));
+            }
+        } else {
+            // Optimize: Fetch only current year logs for stats + last pesticide
+            logs = await Log.find({ farmId }).sort({ date: -1 }).lean();
+        }
         
         // Find last pesticide date or reset
         const lastPesticide = logs.find(log => log.type === 'pesticide' || log.type === 'pesticide_reset');
