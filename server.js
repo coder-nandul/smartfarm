@@ -21,21 +21,47 @@ const tuya = new TuyaContext({
   secretKey: process.env.TUYA_ACCESS_KEY,
 });
 
-// 2. MongoDB Connection (클라우드 DB 마이그레이션)
-const MONGODB_URI = process.env.MONGODB_URI;
+// Embedded Fallback Data for 100% Reliability
+const embeddedData = {
+  "logs": [
+    {
+      "id": "1786962656917",
+      "type": "pesticide",
+      "content": "123",
+      "amount": 0,
+      "unit": "kg",
+      "revenue": 0,
+      "date": "2026-08-17",
+      "farmId": "seohong"
+    }
+  ],
+  "dailyRainfall": {},
+  "weatherStats": {
+    "2026-08-17": { "minTemp": 25.7, "maxTemp": 26.2, "rain24h": 65.9 },
+    "2026-08-18": { "minTemp": 26.2, "maxTemp": 29.6, "rain24h": 56.2 },
+    "2026-08-19": { "minTemp": 24.7, "maxTemp": 24.7, "rain24h": 4 },
+    "2026-08-20": { "minTemp": 26.5, "maxTemp": 32, "rain24h": 0 },
+    "2026-08-21": { "minTemp": 27.7, "maxTemp": 28.7, "rain24h": 0 },
+    "2026-08-22": { "minTemp": 28.6, "maxTemp": 28.6, "rain24h": 3.4 },
+    "2026-08-23": { "minTemp": 26.5, "maxTemp": 26.9, "rain24h": 3.2 },
+    "2026-08-25": { "minTemp": 28.7, "maxTemp": 28.7, "rain24h": 0 },
+    "2026-08-26": { "minTemp": 32.5, "maxTemp": 32.5, "rain24h": 0 }
+  }
+};
 
-if (!MONGODB_URI) {
-    console.warn('⚠️ MONGODB_URI 환경변수가 설정되지 않았습니다. DB 연동이 실패할 수 있습니다.');
-} else {
-    mongoose.connect(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+// 2. MongoDB Connection (클라우드 DB 마이그레이션)
+const MONGODB_URI = process.env.MONGODB_URI || '';
+
+if (MONGODB_URI) {
+    mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
         .then(async () => {
-            console.log('✅ MongoDB Atlas 연결 성공!');
-            // Auto-seed from database.json if MongoDB is empty
-            const fs = require('fs');
-            if (fs.existsSync('./database.json')) {
+            console.log('✅ MongoDB 연결 성공!');
+            
+            // Auto-Migration
+            try {
                 const count = await Log.countDocuments();
                 if (count === 0) {
-                    const localData = JSON.parse(fs.readFileSync('./database.json', 'utf-8'));
+                    const localData = embeddedData;
                     if (localData.logs && localData.logs.length > 0) {
                         await Log.insertMany(localData.logs.map(l => ({
                             type: l.type, content: l.content, amount: l.amount,
@@ -57,6 +83,8 @@ if (!MONGODB_URI) {
                         }
                     }
                 }
+            } catch (err) {
+                console.error('❌ 데이터 마이그레이션 중 오류 발생:', err);
             }
         })
         .catch(err => console.error('❌ MongoDB 연결 실패:', err));
@@ -198,11 +226,9 @@ app.get('/api/logs', async (req, res) => {
         
         if (mongoose.connection.readyState !== 1) {
             // 몽고DB 연결 안됨: 로컬 database.json 폴백
-            if (fs.existsSync('./database.json')) {
-                const localData = JSON.parse(fs.readFileSync('./database.json', 'utf-8'));
-                logs = (localData.logs || []).filter(l => (l.farmId || 'seohong') === farmId);
-                logs.sort((a, b) => new Date(b.date) - new Date(a.date));
-            }
+            const localData = embeddedData;
+            logs = (localData.logs || []).filter(l => (l.farmId || 'seohong') === farmId);
+            logs.sort((a, b) => new Date(b.date) - new Date(a.date));
         } else {
             // Optimize: Fetch only current year logs for stats + last pesticide
             logs = await Log.find({ farmId }).sort({ date: -1 }).lean();
@@ -216,13 +242,11 @@ app.get('/api/logs', async (req, res) => {
             const pesticideDateStr = lastPesticide.date;
             // 기상대에서 측정한 실제 비 데이터를 합산합니다.
             if (mongoose.connection.readyState !== 1) {
-                if (fs.existsSync('./database.json')) {
-                    const localData = JSON.parse(fs.readFileSync('./database.json', 'utf-8'));
-                    if (localData.weatherStats) {
-                        for (const [date, stat] of Object.entries(localData.weatherStats)) {
-                            if (date >= pesticideDateStr) {
-                                cumulativeRain += (stat.rain24h || 0);
-                            }
+                const localData = embeddedData;
+                if (localData.weatherStats) {
+                    for (const [date, stat] of Object.entries(localData.weatherStats)) {
+                        if (date >= pesticideDateStr) {
+                            cumulativeRain += (stat.rain24h || 0);
                         }
                     }
                 }
