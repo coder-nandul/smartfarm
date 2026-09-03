@@ -203,8 +203,22 @@ app.get('/api/logs', async (req, res) => {
         if (lastPesticide) {
             const pesticideDateStr = lastPesticide.date;
             // 기상대에서 측정한 실제 비 데이터를 합산합니다.
-            const rainfallRecords = await WeatherStat.find({ date: { $gte: pesticideDateStr } });
-            cumulativeRain = rainfallRecords.reduce((acc, curr) => acc + (curr.rain24h || 0), 0);
+            if (mongoose.connection.readyState !== 1) {
+                if (fs.existsSync('./database.json')) {
+                    const localData = JSON.parse(fs.readFileSync('./database.json', 'utf-8'));
+                    if (localData.weatherStats) {
+                        for (const [date, stat] of Object.entries(localData.weatherStats)) {
+                            if (date >= pesticideDateStr) {
+                                cumulativeRain += (stat.rain24h || 0);
+                            }
+                        }
+                    }
+                }
+            } else {
+                const rainfallRecords = await WeatherStat.find({ date: { $gte: pesticideDateStr } });
+                cumulativeRain = rainfallRecords.reduce((acc, curr) => acc + (curr.rain24h || 0), 0);
+            }
+            
             if (lastPesticide.rainOffset) {
                 cumulativeRain -= lastPesticide.rainOffset;
             }
