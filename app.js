@@ -33,9 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // 깃허브 등 클라우드에 프론트엔드를 배포하고, Render 등에 백엔드를 배포한 경우 
     // 아래 빈 문자열을 백엔드 주소로 변경하세요. (예: 'https://my-farm-backend.onrender.com')
     const PROD_BACKEND_URL = 'https://smartfarm-rk8a.onrender.com';
-    const API_BASE = PROD_BACKEND_URL; else if (window.location.hostname.includes('github') || window.location.hostname.includes('onrender')) {
-        API_BASE = PROD_BACKEND_URL;
-    }
+    const API_BASE = PROD_BACKEND_URL;
 
     // 1. Time and Date Updates
     const timeEl = document.getElementById('current-time');
