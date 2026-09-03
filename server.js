@@ -44,6 +44,18 @@ if (!MONGODB_URI) {
                         })));
                         console.log('✅ database.json 기존 농사일지 데이터 마이그레이션 완료!');
                     }
+                    if (localData.weatherStats) {
+                        const weatherEntries = Object.entries(localData.weatherStats).map(([date, stat]) => ({
+                            date,
+                            minTemp: stat.minTemp,
+                            maxTemp: stat.maxTemp,
+                            rain24h: stat.rain24h
+                        }));
+                        if (weatherEntries.length > 0) {
+                            await WeatherStat.insertMany(weatherEntries);
+                            console.log('✅ database.json 기존 기상 데이터 마이그레이션 완료!');
+                        }
+                    }
                 }
             }
         })
