@@ -182,7 +182,6 @@ app.get('/api/logs', async (req, res) => {
         }
 
         // Calculate Annual Stats (Current Year)
-        const currentYear = new Date().getFullYear().toString();
         let totalHarvestKg = 0;
         let totalSalesWon = 0;
 
