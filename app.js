@@ -17,6 +17,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 targetContent.classList.add('active');
             }
             
+            window.currentFarmId = targetId.replace('tab-', '');
+            if (typeof fetchLogs === 'function') {
+                fetchLogs();
+            }
+            
             // 탭이 바뀔 때 즉시 통신 상태(헤더) 업데이트
             if (typeof checkConnection === 'function') {
                 checkConnection();
@@ -27,8 +32,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // 0.5. API Base URL (Dynamic)
     // 깃허브 등 클라우드에 프론트엔드를 배포하고, Render 등에 백엔드를 배포한 경우 
     // 아래 빈 문자열을 백엔드 주소로 변경하세요. (예: 'https://my-farm-backend.onrender.com')
-    const PROD_BACKEND_URL = 'https://smartfarm-rk8a.onrender.com'; 
-    const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:3000' : PROD_BACKEND_URL;
+    const PROD_BACKEND_URL = 'https://smartfarm-rk8a.onrender.com';
+    const API_BASE = PROD_BACKEND_URL; else if (window.location.hostname.includes('github') || window.location.hostname.includes('onrender')) {
+        API_BASE = PROD_BACKEND_URL;
+    }
 
     // 1. Time and Date Updates
     const timeEl = document.getElementById('current-time');
@@ -188,16 +195,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // 2.8 Farming Log (Mini-ERP) Interactions
-    const logList = document.getElementById('farming-log-list');
-    const lastPesticideDateEl = document.getElementById('last-pesticide-date');
-    const pesticideRainValEl = document.getElementById('pesticide-rain-val');
-    const annualHarvestEl = document.getElementById('annual-harvest-val');
-    const annualSalesEl = document.getElementById('annual-sales-val');
-
     // Modal Elements
     const modal = document.getElementById('log-modal');
-    const btnOpenModal = document.getElementById('btn-open-modal');
     const btnCloseModal = document.getElementById('btn-close-modal');
+    
+    document.addEventListener('click', (e) => {
+        const openBtn = e.target.closest('.btn-open-modal');
+        if (openBtn) {
+            modal.style.display = 'flex';
+        }
+    });
     const logForm = document.getElementById('log-form');
     const logTypeSelect = document.getElementById('log-type');
     const amountGroup = document.getElementById('amount-group');
@@ -211,19 +218,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const todayStr = new Date().toISOString().split('T')[0];
     logDateInput.value = todayStr;
 
-    btnOpenModal.addEventListener('click', () => { modal.style.display = 'flex'; });
+    // btnOpenModal event replaced by event delegation('click', () => { modal.style.display = 'flex'; });
     btnCloseModal.addEventListener('click', () => { modal.style.display = 'none'; });
 
     // Pesticide Reset Button
-    const btnResetRain = document.getElementById('btn-reset-rain');
-    if (btnResetRain) {
-        btnResetRain.addEventListener('click', async () => {
+    document.addEventListener('click', async (e) => {
+        const resetBtn = e.target.closest('.btn-reset-rain');
+        if (resetBtn) {
             if (confirm('현재 시점부터 강수량을 다시 0으로 초기화하시겠습니까? (새로운 중간 리셋 기록이 추가됩니다.)')) {
                 const payload = {
                     type: 'pesticide_reset',
                     content: '강수량 초기화 (중간 리셋)',
                     amount: 0,
-                    date: new Date().toISOString().split('T')[0]
+                    date: new Date().toISOString().split('T')[0],
+                    farmId: window.currentFarmId
                 };
                 
                 try {
@@ -243,8 +251,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     alert('네트워크 오류가 발생했습니다.');
                 }
             }
-        });
-    }
+        }
+    });
 
     // Handle form dynamic fields based on log type
     logTypeSelect.addEventListener('change', (e) => {
@@ -281,24 +289,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let currentLogsData = [];
 
-    async function fetchLogs() {
+    window.fetchLogs = async function() {
         try {
-            const res = await fetch(`${API_BASE}/api/logs`);
+            const activeTab = document.getElementById(`tab-${window.currentFarmId}`);
+            if (!activeTab) return;
+            const logList = activeTab.querySelector('.farming-log-list');
+            const lastPesticideDateEl = activeTab.querySelector('.last-pesticide-date');
+            const pesticideRainValEl = activeTab.querySelector('.pesticide-rain-val');
+            const annualHarvestEl = activeTab.querySelector('.annual-harvest-val');
+            const annualSalesEl = activeTab.querySelector('.annual-sales-val');
+
+            const res = await fetch(`${API_BASE}/api/logs?farmId=${window.currentFarmId}`);
             if (!res.ok) throw new Error('Failed to fetch logs');
             const data = await res.json();
             
             // Update Annual Stats
-            if (data.annualStats) {
+            if (data.annualStats && annualHarvestEl) {
                 annualHarvestEl.textContent = data.annualStats.totalHarvest.toLocaleString();
                 annualSalesEl.textContent = data.annualStats.totalSales.toLocaleString();
             }
 
             // Update Log List
-            logList.innerHTML = '';
+            if (logList) logList.innerHTML = '';
             currentLogsData = data.logs || [];
             
             if (currentLogsData.length === 0) {
-                logList.innerHTML = '<li class="empty-log">기록이 없습니다.</li>';
+                if (logList) logList.innerHTML = '<li class="empty-log">기록이 없습니다.</li>';
             } else {
                 currentLogsData.forEach(log => {
                     const li = document.createElement('li');
@@ -333,12 +349,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             // Update Pesticide Tracker
-            if (data.pesticideInfo) {
-                lastPesticideDateEl.textContent = data.pesticideInfo.date;
-                pesticideRainValEl.textContent = `${data.pesticideInfo.cumulativeRain}mm`;
-            } else {
-                lastPesticideDateEl.textContent = '기록 없음';
-                pesticideRainValEl.textContent = '0.0mm';
+            if (lastPesticideDateEl && pesticideRainValEl) {
+                if (data.pesticideInfo) {
+                    lastPesticideDateEl.textContent = data.pesticideInfo.date;
+                    pesticideRainValEl.textContent = `${data.pesticideInfo.cumulativeRain}mm`;
+                } else {
+                    lastPesticideDateEl.textContent = '기록 없음';
+                    pesticideRainValEl.textContent = '0.0mm';
+                }
             }
         } catch (e) {
             console.error('Log fetch error:', e);
@@ -354,7 +372,8 @@ document.addEventListener('DOMContentLoaded', () => {
             amount: document.getElementById('log-amount').value || 0,
             unit: amountUnitSelect.style.display !== 'none' ? amountUnitSelect.value : 'kg',
             revenue: document.getElementById('log-revenue').value || 0,
-            content: document.getElementById('log-memo').value
+            content: document.getElementById('log-memo').value,
+            farmId: window.currentFarmId
         };
 
         try {
@@ -493,7 +512,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    fetchLogs();
+    window.fetchLogs();
 
     // 3. Switch Controls
     const TUYA_SWITCH_ID = 'ebdba38839acebb0cbq6r2';

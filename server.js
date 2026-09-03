@@ -45,7 +45,9 @@ const LogSchema = new mongoose.Schema({
         minTemp: Number,
         rain24h: Number,
         condition: String
-    }
+    },
+    rainOffset: { type: Number, default: 0 },
+    farmId: { type: String, default: 'seohong' }
 });
 const Log = mongoose.model('Log', LogSchema);
 
@@ -158,7 +160,11 @@ app.get('/api/health', (req, res) => {
 // Farming Logs & Cumulative Rainfall & Annual Stats
 app.get('/api/logs', async (req, res) => {
     try {
-        const logs = await Log.find().sort({ date: -1 });
+        const farmId = req.query.farmId || 'seohong';
+        const currentYear = new Date().getFullYear().toString();
+        
+        // Optimize: Fetch only current year logs for stats + last pesticide
+        const logs = await Log.find({ farmId }).sort({ date: -1 }).lean();
         
         // Find last pesticide date or reset
         const lastPesticide = logs.find(log => log.type === 'pesticide' || log.type === 'pesticide_reset');
@@ -169,6 +175,10 @@ app.get('/api/logs', async (req, res) => {
             // 기상대에서 측정한 실제 비 데이터를 합산합니다.
             const rainfallRecords = await WeatherStat.find({ date: { $gte: pesticideDateStr } });
             cumulativeRain = rainfallRecords.reduce((acc, curr) => acc + (curr.rain24h || 0), 0);
+            if (lastPesticide.rainOffset) {
+                cumulativeRain -= lastPesticide.rainOffset;
+            }
+            if (cumulativeRain < 0) cumulativeRain = 0;
         }
 
         // Calculate Annual Stats (Current Year)
@@ -207,8 +217,9 @@ app.get('/api/logs', async (req, res) => {
 
 app.post('/api/logs', async (req, res) => {
     try {
-        const { type, content, amount, unit, revenue, date } = req.body;
+        const { type, content, amount, unit, revenue, date, farmId } = req.body;
         const logDate = date || new Date().toISOString().split('T')[0];
+        const logFarmId = farmId || 'seohong';
         
         // Fetch weather stat for the log date
         const weatherStat = await WeatherStat.findOne({ date: logDate });
@@ -219,6 +230,8 @@ app.post('/api/logs', async (req, res) => {
             condition: weatherStat.condition || (weatherStat.rain24h > 0 ? '비' : '맑음')
         } : null;
         
+        const rainOffset = weatherStat ? (weatherStat.rain24h || 0) : 0;
+        
         const newLog = new Log({
             type,
             content,
@@ -226,7 +239,9 @@ app.post('/api/logs', async (req, res) => {
             unit: unit || 'kg',
             revenue: revenue || 0,
             date: logDate,
-            weather: weatherObj
+            weather: weatherObj,
+            rainOffset,
+            farmId: logFarmId
         });
         
         await newLog.save();
