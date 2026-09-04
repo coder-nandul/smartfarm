@@ -125,87 +125,46 @@ const WeatherStatSchema = new mongoose.Schema({
 const WeatherStat = mongoose.model('WeatherStat', WeatherStatSchema);
 
 
-// --- In-Memory Caching & Background Polling for Tuya API ---
-const weatherCache = { data: null, lastFetch: 0 };
-const switchCache = {}; // { [id]: { data: any, lastFetch: number } }
-
-async function pollWeather() {
-    if (!process.env.TUYA_WEATHER_STATION_ID) return;
+// --- Database Logging Utility ---
+async function logWeatherToDB(statusResult) {
+    if (!MONGODB_URI) return;
     try {
-        const deviceId = process.env.TUYA_WEATHER_STATION_ID;
-        const [infoResponse, statusResponse] = await Promise.all([
-            tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}` }),
-            tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
-        ]);
+        const today = new Date(new Date().getTime() + 9 * 3600 * 1000).toISOString().split('T')[0]; // KST
+        let currentTemp = null;
+        let currentRain24h = null;
+        let currentUv = null;
         
-        weatherCache.data = {
-            name: infoResponse.result.name,
-            status: statusResponse.result
-        };
-        weatherCache.lastFetch = Date.now();
-        
-        // Log Statistics to MongoDB
-        if (MONGODB_URI) {
-            const today = new Date(new Date().getTime() + 9 * 3600 * 1000).toISOString().split('T')[0]; // KST
-            let currentTemp = null;
-            let currentRain24h = null;
-            let currentUv = null;
-            
-            statusResponse.result.forEach(item => {
-                if (item.code === 'temp_current_external' || item.code === 'temp_current') currentTemp = item.value / 10;
-                if (item.code === 'rain_24h') currentRain24h = item.value / 10;
-                if (item.code === 'uv_index') currentUv = item.value;
-            });
+        statusResult.forEach(item => {
+            if (item.code === 'temp_current_external' || item.code === 'temp_current') currentTemp = item.value / 10;
+            if (item.code === 'rain_24h') currentRain24h = item.value / 10;
+            if (item.code === 'uv_index') currentUv = item.value;
+        });
 
-            if (currentTemp !== null) {
-                let stat = await WeatherStat.findOne({ date: today });
-                
-                let inferredCondition = '맑음';
-                if (currentRain24h > 0) inferredCondition = '비';
-                else if (currentUv !== null && currentUv <= 2) inferredCondition = '흐림';
-                
-                if (!stat) {
-                    stat = new WeatherStat({ 
-                        date: today, minTemp: currentTemp, maxTemp: currentTemp, 
-                        rain24h: currentRain24h || 0, condition: inferredCondition
-                    });
-                } else {
-                    stat.minTemp = Math.min(stat.minTemp, currentTemp);
-                    stat.maxTemp = Math.max(stat.maxTemp, currentTemp);
-                    stat.rain24h = Math.max(stat.rain24h || 0, currentRain24h || 0);
-                    if (currentRain24h > 0) stat.condition = '비';
-                    else if (stat.condition !== '비') stat.condition = inferredCondition;
-                }
-                await stat.save();
+        if (currentTemp !== null) {
+            let stat = await WeatherStat.findOne({ date: today });
+            
+            let inferredCondition = '맑음';
+            if (currentRain24h > 0) inferredCondition = '비';
+            else if (currentUv !== null && currentUv <= 2) inferredCondition = '흐림';
+            
+            if (!stat) {
+                stat = new WeatherStat({ 
+                    date: today, minTemp: currentTemp, maxTemp: currentTemp, 
+                    rain24h: currentRain24h || 0, condition: inferredCondition
+                });
+            } else {
+                stat.minTemp = Math.min(stat.minTemp, currentTemp);
+                stat.maxTemp = Math.max(stat.maxTemp, currentTemp);
+                stat.rain24h = Math.max(stat.rain24h || 0, currentRain24h || 0);
+                if (currentRain24h > 0) stat.condition = '비';
+                else if (stat.condition !== '비') stat.condition = inferredCondition;
             }
+            await stat.save();
         }
     } catch (e) {
-        console.error('Background weather poll error:', e.message);
+        console.error('Weather DB Log Error:', e.message);
     }
 }
-
-async function pollSwitches() {
-    for (const deviceId of Object.keys(switchCache)) {
-        try {
-            const [infoResponse, statusResponse] = await Promise.all([
-                tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}` }),
-                tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
-            ]);
-            switchCache[deviceId].data = {
-                name: infoResponse.result.name,
-                status: statusResponse.result
-            };
-            switchCache[deviceId].lastFetch = Date.now();
-        } catch (e) {
-            console.error(`Background switch poll error (${deviceId}):`, e.message);
-        }
-    }
-}
-
-// Start polling
-setInterval(pollWeather, 30000); // 30s
-setInterval(pollSwitches, 15000); // 15s
-setTimeout(pollWeather, 2000); // Initial fetch
 
 
 // 3. API Endpoints
@@ -408,23 +367,24 @@ app.get('/api/weather', async (req, res) => {
     try {
         if (!process.env.TUYA_WEATHER_STATION_ID) return res.json({ error: 'No device ID' });
         
-        // 캐시 데이터가 있으면 바로 반환하여 속도 최적화
-        if (weatherCache.data) {
-            // 만약 캐시가 너무 오래되었다면 비동기로 폴링 업데이트만 지시
-            if (Date.now() - weatherCache.lastFetch > 60000) {
-                pollWeather().catch(console.error);
-            }
-            return res.json(weatherCache.data);
-        }
+        // Vercel Serverless Cache: 15s cache, 30s stale-while-revalidate
+        res.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=30');
+
+        const deviceId = process.env.TUYA_WEATHER_STATION_ID;
+        const [infoResponse, statusResponse] = await Promise.all([
+            tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}` }),
+            tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
+        ]);
         
-        // 캐시가 완전히 비어있는 경우(서버 켜진 직후)에만 대기
-        await pollWeather();
+        const data = {
+            name: infoResponse.result.name,
+            status: statusResponse.result
+        };
         
-        if (weatherCache.data) {
-            res.json(weatherCache.data);
-        } else {
-            res.status(500).json({ error: 'Failed to fetch weather data' });
-        }
+        // 비동기 DB 기록 (응답 속도에 영향을 주지 않음)
+        logWeatherToDB(statusResponse.result).catch(console.error);
+        
+        res.json(data);
     } catch (error) {
         console.error('Error fetching weather data:', error.message);
         res.status(500).json({ error: 'Failed to fetch weather data' });
@@ -452,20 +412,9 @@ app.get('/api/switch/:id', async (req, res) => {
     try {
         const deviceId = req.params.id;
         
-        if (!switchCache[deviceId]) {
-            switchCache[deviceId] = { data: null, lastFetch: 0 };
-        }
+        // Vercel Serverless Cache: 15s cache, 30s stale-while-revalidate
+        res.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=30');
         
-        // 캐시 데이터가 있으면 바로 응답하여 속도 최적화
-        if (switchCache[deviceId].data) {
-            if (Date.now() - switchCache[deviceId].lastFetch > 30000) {
-                // 비동기로 데이터 업데이트 트리거
-                pollSwitches().catch(console.error);
-            }
-            return res.json(switchCache[deviceId].data);
-        }
-        
-        // 캐시가 비어있을 때만 직접 API 요청 후 대기
         const [infoResponse, statusResponse] = await Promise.all([
             tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}` }),
             tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
@@ -475,9 +424,6 @@ app.get('/api/switch/:id', async (req, res) => {
             name: infoResponse.result.name,
             status: statusResponse.result
         };
-        
-        switchCache[deviceId].data = responseData;
-        switchCache[deviceId].lastFetch = Date.now();
         
         res.json(responseData);
     } catch (error) {
@@ -506,12 +452,6 @@ app.post('/api/switch/:id', async (req, res) => {
             }
         });
         
-        // 제어 성공 후 캐시 즉시 무효화 및 갱신
-        if (switchCache[deviceId]) {
-            switchCache[deviceId].lastFetch = 0;
-            pollSwitches(); // 비동기로 최신 상태 가져오기 시작
-        }
-        
         res.json({ success: true, result: response.result });
     } catch (error) {
         console.error('Error controlling switch:', error);
@@ -519,7 +459,11 @@ app.post('/api/switch/:id', async (req, res) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`Smart Farm Backend Server running on port ${port}`);
-    console.log(`(Tuya API 연동 및 MongoDB 상태 대기 중)`);
-});
+if (require.main === module) {
+    app.listen(port, () => {
+        console.log(`Smart Farm Backend Server running on port ${port}`);
+        console.log(`(Tuya API 연동 및 MongoDB 상태 대기 중)`);
+    });
+}
+
+module.exports = app;
