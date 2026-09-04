@@ -49,46 +49,51 @@ const embeddedData = {
   }
 };
 
-// 2. MongoDB Connection (클라우드 DB 마이그레이션)
+// 2. MongoDB Connection (Serverless 최적화)
 const MONGODB_URI = process.env.MONGODB_URI || '';
+let isConnected = false;
 
-if (MONGODB_URI) {
-    mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
-        .then(async () => {
-            console.log('✅ MongoDB 연결 성공!');
-            
-            // Auto-Migration
-            try {
-                const count = await Log.countDocuments();
-                if (count === 0) {
-                    const localData = embeddedData;
-                    if (localData.logs && localData.logs.length > 0) {
-                        await Log.insertMany(localData.logs.map(l => ({
-                            type: l.type, content: l.content, amount: l.amount,
-                            unit: l.unit, revenue: l.revenue, date: l.date,
-                            farmId: l.farmId || 'seohong'
-                        })));
-                        console.log('✅ database.json 기존 농사일지 데이터 마이그레이션 완료!');
-                    }
-                    if (localData.weatherStats) {
-                        const weatherEntries = Object.entries(localData.weatherStats).map(([date, stat]) => ({
-                            date,
-                            minTemp: stat.minTemp,
-                            maxTemp: stat.maxTemp,
-                            rain24h: stat.rain24h
-                        }));
-                        if (weatherEntries.length > 0) {
-                            await WeatherStat.insertMany(weatherEntries);
-                            console.log('✅ database.json 기존 기상 데이터 마이그레이션 완료!');
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error('❌ 데이터 마이그레이션 중 오류 발생:', err);
+async function connectDB() {
+    if (isConnected) return;
+    if (!MONGODB_URI) return;
+    try {
+        const db = await mongoose.connect(MONGODB_URI, { 
+            serverSelectionTimeoutMS: 5000 
+        });
+        isConnected = db.connections[0].readyState === 1;
+        console.log('✅ MongoDB 연결 성공 (Serverless)');
+        
+        // Auto-Migration
+        const count = await Log.countDocuments();
+        if (count === 0) {
+            const localData = embeddedData;
+            if (localData.logs && localData.logs.length > 0) {
+                await Log.insertMany(localData.logs.map(l => ({
+                    type: l.type, content: l.content, amount: l.amount,
+                    unit: l.unit, revenue: l.revenue, date: l.date,
+                    farmId: l.farmId || 'seohong'
+                })));
             }
-        })
-        .catch(err => console.error('❌ MongoDB 연결 실패:', err));
+            if (localData.weatherStats) {
+                const weatherEntries = Object.entries(localData.weatherStats).map(([date, stat]) => ({
+                    date, minTemp: stat.minTemp, maxTemp: stat.maxTemp, rain24h: stat.rain24h
+                }));
+                if (weatherEntries.length > 0) {
+                    await WeatherStat.insertMany(weatherEntries);
+                }
+            }
+        }
+    } catch (err) {
+        console.error('❌ MongoDB 연결 실패:', err);
+    }
 }
+
+// 모든 API 요청 전에 DB 연결 확인
+app.use('/api', async (req, res, next) => {
+    await connectDB();
+    next();
+});
+
 
 // 2.1 Mongoose Schemas & Models
 const LogSchema = new mongoose.Schema({
