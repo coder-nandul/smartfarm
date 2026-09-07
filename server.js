@@ -88,11 +88,7 @@ async function connectDB() {
     }
 }
 
-// 모든 API 요청 전에 DB 연결 확인
-app.use('/api', async (req, res, next) => {
-    await connectDB();
-    next();
-});
+// DB 연결은 필요한 라우트 내에서만 개별적으로 호출하여 Serverless 콜드 스타트를 최적화합니다.
 
 
 // 2.1 Mongoose Schemas & Models
@@ -132,6 +128,7 @@ const WeatherStat = mongoose.model('WeatherStat', WeatherStatSchema);
 
 // --- Database Logging Utility ---
 async function logWeatherToDB(statusResult) {
+    await connectDB();
     if (!MONGODB_URI) return;
     try {
         const today = new Date(new Date().getTime() + 9 * 3600 * 1000).toISOString().split('T')[0]; // KST
@@ -182,6 +179,7 @@ app.get('/api/health', (req, res) => {
 // Farming Logs & Cumulative Rainfall & Annual Stats
 app.get('/api/logs', async (req, res) => {
     try {
+        await connectDB();
         const farmId = req.query.farmId || 'seohong';
         const currentYear = new Date().getFullYear().toString();
         
@@ -260,6 +258,7 @@ app.get('/api/logs', async (req, res) => {
 
 app.post('/api/logs', async (req, res) => {
     try {
+        await connectDB();
         const { type, content, amount, unit, revenue, date, farmId } = req.body;
         const logDate = date || new Date().toISOString().split('T')[0];
         const logFarmId = farmId || 'seohong';
@@ -297,6 +296,7 @@ app.post('/api/logs', async (req, res) => {
 
 app.put('/api/logs/:id', async (req, res) => {
     try {
+        await connectDB();
         const { id } = req.params;
         const { type, content, amount, unit, revenue, date } = req.body;
         
@@ -329,6 +329,7 @@ app.put('/api/logs/:id', async (req, res) => {
 
 app.delete('/api/logs/:id', async (req, res) => {
     try {
+        await connectDB();
         const { id } = req.params;
         await Log.findByIdAndDelete(id);
         res.json({ success: true });
@@ -341,6 +342,7 @@ app.delete('/api/logs/:id', async (req, res) => {
 // Rainfall data (Mocking logic for Tuya integration or manual update)
 app.get('/api/rainfall', async (req, res) => {
     try {
+        await connectDB();
         const today = new Date().toISOString().split('T')[0];
         const todayRecord = await DailyRainfall.findOne({ date: today });
         const todayRain = todayRecord ? todayRecord.amount : 0.0;
@@ -399,6 +401,7 @@ app.get('/api/weather', async (req, res) => {
 // Get Weather Stats (자체 통계 데이터)
 app.get('/api/weather/stats', async (req, res) => {
     try {
+        await connectDB();
         const stats = await WeatherStat.find().sort({ date: -1 });
         // 클라이언트에서 기존과 동일하게 객체 형태로 매핑하기 위함
         const statsObj = {};
