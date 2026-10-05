@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const mongoose = require('mongoose');
 const { TuyaContext } = require('@tuya/tuya-connector-nodejs');
 
@@ -22,32 +23,24 @@ const tuya = new TuyaContext({
 });
 
 // Embedded Fallback Data for 100% Reliability
-const embeddedData = {
-  "logs": [
-    {
-      "id": "1786962656917",
-      "type": "pesticide",
-      "content": "123",
-      "amount": 0,
-      "unit": "kg",
-      "revenue": 0,
-      "date": "2026-08-17",
-      "farmId": "seohong"
+const DB_FILE = path.join(__dirname, 'database.json');
+function getLocalDB() {
+    try {
+        if (fs.existsSync(DB_FILE)) {
+            return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+        }
+    } catch (e) {
+        console.error('Failed to read database.json:', e);
     }
-  ],
-  "dailyRainfall": {},
-  "weatherStats": {
-    "2026-08-17": { "minTemp": 25.7, "maxTemp": 26.2, "rain24h": 65.9 },
-    "2026-08-18": { "minTemp": 26.2, "maxTemp": 29.6, "rain24h": 56.2 },
-    "2026-08-19": { "minTemp": 24.7, "maxTemp": 24.7, "rain24h": 4 },
-    "2026-08-20": { "minTemp": 26.5, "maxTemp": 32, "rain24h": 0 },
-    "2026-08-21": { "minTemp": 27.7, "maxTemp": 28.7, "rain24h": 0 },
-    "2026-08-22": { "minTemp": 28.6, "maxTemp": 28.6, "rain24h": 3.4 },
-    "2026-08-23": { "minTemp": 26.5, "maxTemp": 26.9, "rain24h": 3.2 },
-    "2026-08-25": { "minTemp": 28.7, "maxTemp": 28.7, "rain24h": 0 },
-    "2026-08-26": { "minTemp": 32.5, "maxTemp": 32.5, "rain24h": 0 }
-  }
-};
+    return { logs: [], dailyRainfall: {}, weatherStats: {} };
+}
+function saveLocalDB(data) {
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (e) {
+        console.error('Failed to write database.json:', e);
+    }
+}
 
 // 2. MongoDB Connection (Serverless 최적화)
 const MONGODB_URI = process.env.MONGODB_URI || '';
@@ -66,7 +59,7 @@ async function connectDB() {
         // Auto-Migration
         const count = await Log.countDocuments();
         if (count === 0) {
-            const localData = embeddedData;
+            const localData = getLocalDB();
             if (localData.logs && localData.logs.length > 0) {
                 await Log.insertMany(localData.logs.map(l => ({
                     type: l.type, content: l.content, amount: l.amount,
@@ -129,7 +122,6 @@ const WeatherStat = mongoose.model('WeatherStat', WeatherStatSchema);
 // --- Database Logging Utility ---
 async function logWeatherToDB(statusResult) {
     await connectDB();
-    if (!MONGODB_URI) return;
     try {
         const today = new Date(new Date().getTime() + 9 * 3600 * 1000).toISOString().split('T')[0]; // KST
         let currentTemp = null;
@@ -143,11 +135,28 @@ async function logWeatherToDB(statusResult) {
         });
 
         if (currentTemp !== null) {
-            let stat = await WeatherStat.findOne({ date: today });
-            
             let inferredCondition = '맑음';
             if (currentRain24h > 0) inferredCondition = '비';
             else if (currentUv !== null && currentUv <= 2) inferredCondition = '흐림';
+
+            if (!MONGODB_URI || mongoose.connection.readyState !== 1) {
+                const localData = getLocalDB();
+                if (!localData.weatherStats) localData.weatherStats = {};
+                let stat = localData.weatherStats[today];
+                if (!stat) {
+                    localData.weatherStats[today] = { minTemp: currentTemp, maxTemp: currentTemp, rain24h: currentRain24h || 0, condition: inferredCondition };
+                } else {
+                    stat.minTemp = Math.min(stat.minTemp || currentTemp, currentTemp);
+                    stat.maxTemp = Math.max(stat.maxTemp || currentTemp, currentTemp);
+                    stat.rain24h = Math.max(stat.rain24h || 0, currentRain24h || 0);
+                    if (currentRain24h > 0) stat.condition = '비';
+                    else if (stat.condition !== '비') stat.condition = inferredCondition;
+                }
+                saveLocalDB(localData);
+                return;
+            }
+
+            let stat = await WeatherStat.findOne({ date: today });
             
             if (!stat) {
                 stat = new WeatherStat({ 
@@ -188,8 +197,9 @@ app.get('/api/logs', async (req, res) => {
         
         if (mongoose.connection.readyState !== 1) {
             // 몽고DB 연결 안됨: 로컬 database.json 폴백
-            const localData = embeddedData;
+            const localData = getLocalDB();
             logs = (localData.logs || []).filter(l => (l.farmId || 'seohong') === farmId);
+            logs = logs.map(l => ({ ...l, _id: l.id || l._id }));
             logs.sort((a, b) => new Date(b.date) - new Date(a.date));
         } else {
             // Optimize: Fetch only current year logs for stats + last pesticide
@@ -204,7 +214,7 @@ app.get('/api/logs', async (req, res) => {
             const pesticideDateStr = lastPesticide.date;
             // 기상대에서 측정한 실제 비 데이터를 합산합니다.
             if (mongoose.connection.readyState !== 1) {
-                const localData = embeddedData;
+                const localData = getLocalDB();
                 if (localData.weatherStats) {
                     for (const [date, stat] of Object.entries(localData.weatherStats)) {
                         if (date >= pesticideDateStr) {
@@ -263,6 +273,22 @@ app.post('/api/logs', async (req, res) => {
         const logDate = date || new Date().toISOString().split('T')[0];
         const logFarmId = farmId || 'seohong';
         
+        if (mongoose.connection.readyState !== 1) {
+            const localData = getLocalDB();
+            const weatherStat = localData.weatherStats && localData.weatherStats[logDate];
+            const rainOffset = weatherStat ? (weatherStat.rain24h || 0) : 0;
+            const newLog = {
+                id: Date.now().toString(),
+                type, content, amount: amount || 0, unit: unit || 'kg', revenue: revenue || 0,
+                date: logDate, farmId: logFarmId, rainOffset,
+                weather: weatherStat ? { ...weatherStat, condition: weatherStat.condition || (weatherStat.rain24h > 0 ? '비' : '맑음') } : null
+            };
+            if (!localData.logs) localData.logs = [];
+            localData.logs.push(newLog);
+            saveLocalDB(localData);
+            return res.json({ success: true });
+        }
+
         // Fetch weather stat for the log date
         const weatherStat = await WeatherStat.findOne({ date: logDate });
         const weatherObj = weatherStat ? {
@@ -302,6 +328,21 @@ app.put('/api/logs/:id', async (req, res) => {
         
         const logDate = date || new Date().toISOString().split('T')[0];
         
+        if (mongoose.connection.readyState !== 1) {
+            const localData = getLocalDB();
+            const index = (localData.logs || []).findIndex(l => l.id === id || l._id === id);
+            if (index !== -1) {
+                const weatherStat = localData.weatherStats && localData.weatherStats[logDate];
+                localData.logs[index] = {
+                    ...localData.logs[index],
+                    type, content, amount: amount || 0, unit: unit || 'kg', revenue: revenue || 0, date: logDate,
+                    weather: weatherStat ? { ...weatherStat, condition: weatherStat.condition || (weatherStat.rain24h > 0 ? '비' : '맑음') } : null
+                };
+                saveLocalDB(localData);
+            }
+            return res.json({ success: true });
+        }
+
         // Fetch weather stat for the updated date
         const weatherStat = await WeatherStat.findOne({ date: logDate });
         const weatherObj = weatherStat ? {
@@ -331,6 +372,16 @@ app.delete('/api/logs/:id', async (req, res) => {
     try {
         await connectDB();
         const { id } = req.params;
+        
+        if (mongoose.connection.readyState !== 1) {
+            const localData = getLocalDB();
+            if (localData.logs) {
+                localData.logs = localData.logs.filter(l => l.id !== id && l._id !== id);
+                saveLocalDB(localData);
+            }
+            return res.json({ success: true });
+        }
+        
         await Log.findByIdAndDelete(id);
         res.json({ success: true });
     } catch (e) {
@@ -344,10 +395,9 @@ app.get('/api/rainfall', async (req, res) => {
     try {
         await connectDB();
         const today = new Date().toISOString().split('T')[0];
-        const todayRecord = await DailyRainfall.findOne({ date: today });
-        const todayRain = todayRecord ? todayRecord.amount : 0.0;
+        let todayRain = 0.0;
+        let weeklyRain = 0.0;
         
-        // Weekly rain
         const now = new Date();
         const dates = [];
         for (let i = 0; i < 7; i++) {
@@ -356,8 +406,20 @@ app.get('/api/rainfall', async (req, res) => {
             dates.push(d.toISOString().split('T')[0]);
         }
         
-        const weeklyRecords = await DailyRainfall.find({ date: { $in: dates } });
-        const weeklyRain = weeklyRecords.reduce((acc, curr) => acc + curr.amount, 0);
+        if (mongoose.connection.readyState !== 1) {
+            const localData = getLocalDB();
+            if (localData.weatherStats) {
+                if (localData.weatherStats[today]) todayRain = localData.weatherStats[today].rain24h || 0;
+                dates.forEach(d => {
+                    if (localData.weatherStats[d]) weeklyRain += (localData.weatherStats[d].rain24h || 0);
+                });
+            }
+        } else {
+            const todayRecord = await WeatherStat.findOne({ date: today });
+            todayRain = todayRecord ? (todayRecord.rain24h || 0) : 0.0;
+            const weeklyRecords = await WeatherStat.find({ date: { $in: dates } });
+            weeklyRain = weeklyRecords.reduce((acc, curr) => acc + (curr.rain24h || 0), 0);
+        }
         
         res.json({
             today: todayRain.toFixed(1),
@@ -383,6 +445,11 @@ app.get('/api/weather', async (req, res) => {
             tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
         ]);
         
+        if (!infoResponse.success || !statusResponse.success) {
+            console.error('Tuya API Weather Error:', infoResponse.msg || statusResponse.msg);
+            return res.status(502).json({ error: 'Tuya API Error', detail: infoResponse.msg || statusResponse.msg });
+        }
+        
         const data = {
             name: infoResponse.result.name,
             status: statusResponse.result
@@ -402,6 +469,12 @@ app.get('/api/weather', async (req, res) => {
 app.get('/api/weather/stats', async (req, res) => {
     try {
         await connectDB();
+        
+        if (mongoose.connection.readyState !== 1) {
+            const localData = getLocalDB();
+            return res.json(localData.weatherStats || {});
+        }
+        
         const stats = await WeatherStat.find().sort({ date: -1 });
         // 클라이언트에서 기존과 동일하게 객체 형태로 매핑하기 위함
         const statsObj = {};
@@ -427,6 +500,11 @@ app.get('/api/switch/:id', async (req, res) => {
             tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}` }),
             tuya.request({ method: 'GET', path: `/v1.0/iot-03/devices/${deviceId}/status` })
         ]);
+        
+        if (!infoResponse.success || !statusResponse.success) {
+            console.error('Tuya API Switch Error:', infoResponse.msg || statusResponse.msg);
+            return res.status(502).json({ error: 'Tuya API Error', detail: infoResponse.msg || statusResponse.msg });
+        }
         
         const responseData = {
             name: infoResponse.result.name,
